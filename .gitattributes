@@ -1,0 +1,6 @@
+# Keep LF everywhere: these files run on Linux/Docker, and a CRLF checkout
+# would break .sh scripts, Dockerfiles and the Caddyfile.
+* text=auto eol=lf
+
+*.png binary
+*.bin binary

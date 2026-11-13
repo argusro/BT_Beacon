@@ -1,0 +1,70 @@
+name: bt-beacon-local
+
+# Local test of the VPS layout on the desktop WSL.
+# Reuses the existing Docker volumes, so the saved auth.json is picked up and
+# no new Apple login/2FA is needed.
+#
+#   docker compose -f docker-compose.local.yml up -d --build
+#   open http://localhost:8099
+#   docker compose -f docker-compose.local.yml down
+
+services:
+  anisette:
+    image: ghcr.io/fdkevin0/anisette-server-rs:latest
+    command: ["--backend", "macos"]
+    restart: unless-stopped
+    volumes:
+      - anisette-data:/data
+    networks: [mh]
+
+  endpoint:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: bt-beacon-haystack
+    restart: unless-stopped
+    volumes:
+      - mh-data:/app/endpoint/data
+    networks: [mh]
+    depends_on: [anisette]
+
+  dashboard:
+    build:
+      context: ../../..
+      dockerfile: scripts/haystack/dashboard.Dockerfile
+    restart: unless-stopped
+    command:
+      - --endpoint
+      - http://endpoint:6176
+      - --key-file
+      - /keys/beacon.priv.hex
+      - --store
+      - /data/history.json
+      - --keep-days
+      - "365"
+      - --poll
+      - "15"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+    volumes:
+      - ../../../keys:/keys:ro
+      - history:/data
+    ports:
+      - "8099:8080"
+    networks: [mh]
+
+volumes:
+  anisette-data:
+    external: true
+    name: anisette-mac-data
+  mh-data:
+    external: true
+    name: mh_data
+  history:
+
+networks:
+  mh:
+    name: mh-network
+    external: true

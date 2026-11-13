@@ -1,0 +1,17 @@
+.pio/
+.vscode/
+*.bak
+
+# Private keys must never be committed. Only the public advertising key
+# (src/beacon_key.h) belongs in the repo.
+keys/*.priv.hex
+keys/*.priv
+keys/*_devices.json
+
+# fetched location reports (contains your location history)
+reports.json
+keys/*_history.json
+
+# local virtualenvs
+.venv/
+__pycache__/

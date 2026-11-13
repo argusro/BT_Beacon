@@ -1,0 +1,88 @@
+name: bt-beacon
+
+# VPS deployment: anisette (macOS ADI) + patched endpoint + dashboard.
+# Neither 6176 nor 6969 is published - they stay on the internal network.
+#
+# Only the dashboard is exposed, on ${DASHBOARD_PORT:-8099}, protected by HTTP
+# basic auth (set DASHBOARD_USER / DASHBOARD_PASS in a .env file).
+#
+#   docker compose up -d --build
+#   docker compose run --rm endpoint      # one-time interactive Apple ID + 2FA
+#
+# The mh-data volume holds auth.json; back it up, it saves a fresh 2FA later.
+# Ports 80/443 are optional: Caddy lives behind the "tls" profile and uses
+# ${HTTP_PORT:-8081} / ${HTTPS_PORT:-8443} so it never fights other services.
+
+services:
+  anisette:
+    image: ghcr.io/fdkevin0/anisette-server-rs:latest
+    command: ["--backend", "macos"]
+    restart: unless-stopped
+    volumes:
+      - anisette-data:/data
+    networks: [mh]
+
+  endpoint:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: bt-beacon-haystack
+    restart: unless-stopped
+    volumes:
+      - mh-data:/app/endpoint/data
+    networks: [mh]
+    depends_on: [anisette]
+
+  dashboard:
+    build:
+      context: ../../..
+      dockerfile: scripts/haystack/dashboard.Dockerfile
+    restart: unless-stopped
+    command:
+      - --endpoint
+      - http://endpoint:6176
+      - --key-file
+      - /keys/beacon.priv.hex
+      - --store
+      - /data/history.json
+      - --keep-days
+      - "365"
+      - --poll
+      - "15"
+      - --auth
+      - ${DASHBOARD_USER:-argus}:${DASHBOARD_PASS:-changeme}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+    volumes:
+      - ../../../keys:/keys:ro
+      - history:/data
+    ports:
+      - "${DASHBOARD_PORT:-8099}:8080"
+    networks: [mh]
+
+  # Optional TLS front end. Enable with:  docker compose --profile tls up -d
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["tls"]
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8081}:80"
+      - "${HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [mh]
+    depends_on: [dashboard]
+
+volumes:
+  anisette-data:
+  mh-data:
+  history:
+  caddy-data:
+  caddy-config:
+
+networks:
+  mh:

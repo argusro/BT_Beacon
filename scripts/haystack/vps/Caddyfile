@@ -1,0 +1,15 @@
+# Optional TLS front end (compose profile "tls").
+#
+# The dashboard already enforces HTTP basic auth (DASHBOARD_USER / DASHBOARD_PASS),
+# so this only adds TLS + a hostname.
+#
+# HTTP/HTTPS are published on ${HTTP_PORT:-8081} / ${HTTPS_PORT:-8443} because
+# 80/443 are usually taken on a shared VPS. ACME HTTP-01 needs port 80, so with
+# 80 occupied Caddy falls back to TLS-ALPN on 443 - or use the DNS challenge.
+#
+# If you do not want a public hostname at all, skip this profile and reach
+# http://<vps>:8099 through a private network (Tailscale/WireGuard).
+
+beacon.example.com {
+	reverse_proxy dashboard:8080
+}
