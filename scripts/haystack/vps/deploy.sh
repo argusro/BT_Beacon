@@ -112,7 +112,10 @@ fi
 
 echo "==> build + restart"
 docker compose up -d --build
-echo
+# A new keys/*_keys.json lives in a bind mount, so compose sees no config
+# change and would leave the old process running. Restarting forces the
+# dashboard to re-scan the ring directory.
+docker compose restart dashboard >/dev/null
 docker compose ps
 echo
 echo "dashboard: http://<server>:8099  (credentials in .env)"

@@ -440,6 +440,7 @@ class Handler(BaseHTTPRequestHandler):
     args = None
     rings: dict = None
     tag_ids: dict = None
+    keys_dir: pathlib.Path = None
     icon: bytes = None
 
     def log_message(self, fmt, *a):
@@ -534,7 +535,14 @@ class Handler(BaseHTTPRequestHandler):
             if not user["is_admin"]:
                 self._send(403, "text/plain", b"admin only")
                 return
-            self._json({"users": self.store.users(), "tags": self.store.all_tags()})
+            keys_dir = self.keys_dir
+            self._json({
+                "users": self.store.users(),
+                "tags": self.store.all_tags(),
+                "keys_dir": str(keys_dir),
+                "ring_files": sorted(p.name for p in keys_dir.glob("*_keys.json")),
+                "loaded_rings": {n: len(r) for n, r in self.rings.items()},
+            })
         else:
             self._send(404, "text/plain", b"not found")
 
@@ -690,6 +698,7 @@ def main() -> int:
     Handler.args = args
     Handler.rings = rings
     Handler.tag_ids = tag_ids
+    Handler.keys_dir = keys_dir
     Handler.icon = make_icon()
 
     if args.poll > 0:
