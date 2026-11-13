@@ -51,15 +51,16 @@ ends up in shell history and in `.git/config`.
 **C. By hand** (no script):
 
 ```bash
-git clone --filter=blob:none --sparse --depth 1 https://github.com/argusro/BT_Beacon.git /opt/bt-beacon
-cd /opt/bt-beacon
+git clone --filter=blob:none --sparse --depth 1 https://github.com/argusro/BT_Beacon.git ~/bt-beacon
+cd ~/bt-beacon
 git sparse-checkout set scripts/haystack scripts/map_server.py scripts/decrypt_reports.py scripts/web
 bash scripts/haystack/vps/deploy.sh
 ```
 
 `deploy.sh` defaults `REPO_URL` to
-`https://github.com/argusro/BT_Beacon.git` and `APP_DIR` to `/opt/bt-beacon`, so
-on a box with cached credentials it is just:
+`https://github.com/argusro/BT_Beacon.git` and `APP_DIR` to `$HOME/bt-beacon`
+(no `sudo` needed — `/opt` would require root, which makes the `scp` of your
+keys awkward), so on a box with cached credentials it is just:
 
 ```bash
 bash deploy.sh          # first run: clone + build + start
@@ -73,7 +74,7 @@ It prints the resolved repo URL first, so you can see what it is about to use.
 The endpoint needs an Apple session once:
 
 ```bash
-cd /opt/bt-beacon/scripts/haystack/vps
+cd ~/bt-beacon/scripts/haystack/vps
 docker compose run --rm endpoint
 ```
 
@@ -86,7 +87,7 @@ invalidates the session.
 Private keys are **not in the repository**. Copy the ring from your workstation:
 
 ```bash
-scp keys/beacon_keys.json <vps>:/opt/bt-beacon/keys/
+scp keys/beacon_keys.json <vps>:~/bt-beacon/keys/
 ```
 
 The dashboard mounts `../keys` read-only at `/keys` and reads

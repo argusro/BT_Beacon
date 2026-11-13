@@ -20,7 +20,7 @@
 #
 # Environment:
 #   REPO_URL   default https://github.com/argusro/BT_Beacon.git
-#   APP_DIR    default /opt/bt-beacon
+#   APP_DIR    default $HOME/bt-beacon (no sudo needed; override if you prefer)
 #   BRANCH     default master
 #
 # First run also creates scripts/haystack/vps/.env with a random dashboard
@@ -29,7 +29,7 @@
 set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/argusro/BT_Beacon.git}"
-APP_DIR="${APP_DIR:-/opt/bt-beacon}"
+APP_DIR="${APP_DIR:-$HOME/bt-beacon}"
 BRANCH="${BRANCH:-master}"
 
 SPARSE_PATHS=(
