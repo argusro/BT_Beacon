@@ -270,10 +270,14 @@ Open `http://localhost:8099` on the PC. The script also prints a
 Firewall prompt the first time. `--host 127.0.0.1` keeps it off the LAN.
 
 The page has an **Open latest in Google Maps** button, an Apple Maps link, a
-copy-coordinates link and a **History** list. The list is collapsible (starts
-folded on phones, remembers your choice) and has a **calendar picker**: days with
-points are highlighted and clickable, days without data are greyed out, and
-picking one filters both the map and the list to that date.
+copy-coordinates link and a **History** list. Both panels fold: the top HUD
+keeps only the count and last-seen (everything from the button down is behind the
+chevron), and the history list starts folded on phones. Both remember your
+choice.
+
+The history list has a **calendar picker**: days with points are highlighted and
+clickable, days without data are greyed out, and picking one filters both the map
+and the list to that date.
 
 ### Add it to the iPhone home screen
 
@@ -308,6 +312,32 @@ without limit:
 
 Set either to `0` to disable that bound. The file is not rotated or split — it is
 simply trimmed in place, which keeps the code and the API simple.
+
+#### Keeping more than a year
+
+Raise both bounds, e.g. five years:
+
+```bash
+python scripts/map_server.py --keep-days 1825 --max-points 300000
+```
+
+Numbers: ~96 points/day × 160 B ≈ **5.5 MB/year**, so 5 years ≈ 28 MB, and
+`--max-points 300000` ≈ 48 MB. Two things make that workable:
+
+- **The UI no longer downloads everything.** `/api/summary?tz=…` returns only
+  per-day counts for the calendar, and `/api/reports` returns just the selected
+  window (`?days=N` or `?from=…&to=…`). Previously every refresh shipped the
+  whole file to the browser.
+- **Fetches are throttled** by `--refresh-seconds` (default 120), so opening the
+  page in several tabs does not hammer Apple.
+
+The default window is `--ui-days 7`; the calendar still shows every day that
+exists in the file.
+
+One honest limit: the store is a single JSON rewritten on every merge, so at
+tens of megabytes each poll rewrites the whole file (~96 × 28 MB/day at 5 years).
+That is fine on an SSD but wasteful on an SD card. If you ever want a decade of
+history, moving to SQLite is the right next step — not implemented.
 
 What it does **not** do: recover points from before you started collecting. If
 the stack is stopped for more than ~7 days, that gap is gone.

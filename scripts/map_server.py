@@ -31,6 +31,7 @@ import urllib.request
 import zlib
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs
 
 from cryptography.hazmat.primitives.asymmetric import ec
 
@@ -40,7 +41,7 @@ from decrypt_reports import decrypt_payload, load_keys  # noqa: E402
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 AUTH = None  # (user, password) when --auth is given
 WEB_DIR = ROOT / "scripts" / "web"  # served as static files, re-read per request
-STATE = {"last_ok": None, "last_error": None}  # set by every fetch / poll
+STATE = {"last_ok": None, "last_error": None, "last_fetch": 0.0}  # set by every fetch
 
 
 MANIFEST = {
@@ -177,21 +178,77 @@ def collect(args, keys: dict, history: History) -> None:
     STATE["last_error"] = None
 
 
-def build_payload(args, keys: dict, history: History) -> dict:
-    error = None
+def _epoch(iso: str) -> float:
+    return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+
+
+def maybe_refresh(args, keys: dict, history: History, force: bool) -> str | None:
+    """Fetch from Apple at most every --refresh-seconds (or when forced)."""
+    if not force and time.time() - STATE["last_fetch"] < args.refresh_seconds:
+        return STATE["last_error"]
+    STATE["last_fetch"] = time.time()
     try:
         collect(args, keys, history)
     except RuntimeError as exc:
-        error = str(exc)
-    points = history.snapshot()
+        return str(exc)
+    return None
+
+
+def select_points(points: list[dict], args, query: dict) -> list[dict]:
+    frm = (query.get("from") or [None])[0]
+    to = (query.get("to") or [None])[0]
+    if frm or to:
+        lo = _epoch(frm) if frm else 0.0
+        hi = _epoch(to) if to else float("inf")
+        return [p for p in points if lo <= _epoch(p["when"]) < hi]
+
+    days = int((query.get("days") or [args.ui_days])[0] or 0)
+    if days > 0:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).timestamp()
+        return [p for p in points if _epoch(p["when"]) >= cutoff]
+    return points
+
+
+def build_payload(args, keys: dict, history: History, query: dict) -> dict:
+    error = maybe_refresh(args, keys, history, bool(query.get("force")))
+    all_points = history.snapshot()
+    points = select_points(all_points, args, query)
     return {
         "count": len(points),
+        "total": len(all_points),
         "reports": points,
-        "stored_since": points[0]["when"] if points else None,
+        "stored_since": all_points[0]["when"] if all_points else None,
         "keep_days": args.keep_days,
         "max_points": args.max_points,
         "keys": len(keys),
         "error": error,
+        "last_ok": STATE["last_ok"],
+    }
+
+
+def summary_payload(args, keys: dict, history: History, query: dict) -> dict:
+    """Per-local-day counts for the calendar, without shipping every point."""
+    try:
+        tz_offset = int((query.get("tz") or ["0"])[0])
+    except ValueError:
+        tz_offset = 0
+
+    points = history.snapshot()
+    days: dict[str, int] = {}
+    for p in points:
+        local = datetime.fromisoformat(p["when"]) - timedelta(minutes=tz_offset)
+        key = local.date().isoformat()
+        days[key] = days.get(key, 0) + 1
+
+    return {
+        "count": len(points),
+        "days": days,
+        "stored_since": points[0]["when"] if points else None,
+        "keep_days": args.keep_days,
+        "max_points": args.max_points,
+        "ui_days": args.ui_days,
+        "keys": len(keys),
+        "error": STATE["last_error"],
         "last_ok": STATE["last_ok"],
     }
 
@@ -232,10 +289,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send(401, "text/plain", b"auth required")
             return
 
-        if self.path.startswith("/api/reports"):
-            payload = build_payload(self.args, self.keys, self.history)
+        path, _, raw_query = self.path.partition("?")
+        query = parse_qs(raw_query)
+
+        if path == "/api/reports":
+            payload = build_payload(self.args, self.keys, self.history, query)
             self._send(200, "application/json", json.dumps(payload).encode())
-        elif self.path in ("/", "/index.html"):
+        elif path == "/api/summary":
+            payload = summary_payload(self.args, self.keys, self.history, query)
+            self._send(200, "application/json", json.dumps(payload).encode())
+        elif path in ("/", "/index.html"):
             try:
                 body = (pathlib.Path(WEB_DIR) / "index.html").read_bytes()
                 self._send(200, "text/html; charset=utf-8", body)
@@ -280,6 +343,10 @@ def main() -> int:
                         help="drop history older than this many days, 0 = keep all")
     parser.add_argument("--max-points", type=int, default=20000,
                         help="hard cap on stored points, oldest dropped first (0 = no cap)")
+    parser.add_argument("--ui-days", type=int, default=7,
+                        help="default window returned by /api/reports")
+    parser.add_argument("--refresh-seconds", type=int, default=120,
+                        help="minimum seconds between Apple fetches triggered by the UI")
     parser.add_argument("--auth", default=None,
                         help="HTTP basic auth as user:password")
     parser.add_argument("--web-dir", default=None,

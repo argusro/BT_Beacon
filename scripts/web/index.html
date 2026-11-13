@@ -18,20 +18,30 @@
     border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.3);
     font: 13px/1.45 system-ui, sans-serif;
   }
-  #hud { top: 10px; left: 50px; right: 10px; max-width: 340px; padding: 10px 12px; }
-  #hud b { font-size: 15px; }
-  #open { display:block; margin:9px 0 4px; padding:11px 12px; background:#1a73e8;
+  /* ---- top HUD ---- */
+  #hud { top: 10px; left: 50px; right: 10px; max-width: 340px; padding: 8px 12px; }
+  #hudhead { display: flex; align-items: flex-start; gap: 4px; cursor: pointer;
+             user-select: none; -webkit-user-select: none; }
+  #hudhead > div { flex: 1; min-width: 0; }
+  #hudhead b { font-size: 15px; }
+  #hudtoggle { background: none; border: 0; font: inherit; color: #1a73e8;
+               cursor: pointer; padding: 2px 0 0; width: 16px; line-height: 1;
+               transition: transform .15s; }
+  #hud:not(.collapsed) #hudtoggle { transform: rotate(90deg); }
+  #hud.collapsed #hudbody { display: none; }
+  #hudbody { margin-top: 6px; }
+  #open { display:block; margin:6px 0 4px; padding:11px 12px; background:#1a73e8;
           color:#fff; text-align:center; text-decoration:none; border-radius:6px;
           font-weight:600; font-size:15px; }
   #open.off { background:#9aa0a6; pointer-events:none; }
   #hud a.alt { color:#1a73e8; text-decoration:none; font-size:12px; margin-right:12px; }
   #hud small { color:#555; }
 
+  /* ---- history ---- */
   #hist { bottom: 10px; left: 50px; width: min(330px, calc(100vw - 92px));
           max-height: 46vh; display: flex; flex-direction: column; overflow: hidden; }
   #hist.collapsed { max-height: none; }
   #hist.collapsed #list, #hist.collapsed #cal { display: none; }
-
   #histbar { display: flex; align-items: center; gap: 6px; padding: 8px 10px;
              cursor: pointer; user-select: none; -webkit-user-select: none; }
   #histtitle { font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
@@ -79,13 +89,20 @@
 <div id="map"></div>
 
 <div id="hud" class="panel">
-  <b id="count">loading&hellip;</b><br>
-  <span id="seen"></span><br>
-  <a id="open" class="off" href="#">Open latest in Google Maps</a>
-  <a id="apple" class="alt" href="#">Apple Maps</a>
-  <a id="copy" class="alt" href="#">Copy coordinates</a>
-  <a id="install" class="alt" href="#">Add to Home Screen</a>
-  <br><small id="meta"></small>
+  <div id="hudhead">
+    <button id="hudtoggle" aria-label="Toggle details">&#9656;</button>
+    <div>
+      <b id="count">loading&hellip;</b><br>
+      <span id="seen"></span>
+    </div>
+  </div>
+  <div id="hudbody">
+    <a id="open" class="off" href="#">Open latest in Google Maps</a>
+    <a id="apple" class="alt" href="#">Apple Maps</a>
+    <a id="copy" class="alt" href="#">Copy coordinates</a>
+    <a id="install" class="alt" href="#">Add to Home Screen</a>
+    <br><small id="meta"></small>
+  </div>
 </div>
 
 <div id="banner" class="panel" hidden></div>
@@ -104,7 +121,7 @@
       <button id="next" aria-label="Next month">&rsaquo;</button>
     </div>
     <div class="calgrid" id="calgrid"></div>
-    <button id="allbtn">Show all dates</button>
+    <button id="allbtn">Recent</button>
   </div>
   <div id="list"></div>
 </div>
@@ -124,13 +141,19 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 const layer = L.layerGroup().addTo(map);
 
-let allPoints = [];
-let counts = {};            // 'YYYY-MM-DD' -> number of points
-let selected = null;        // 'YYYY-MM-DD' or null
-let calMonth = new Date();  // first of the displayed month
+const state = {
+  counts: {},       // local day -> points, from /api/summary
+  selected: null,   // 'YYYY-MM-DD'
+  reports: [],      // server-filtered window
+  uiDays: 7,
+  meta: {},
+  firstLoad: true,
+};
+let calMonth = new Date();
 let markers = [];
-let firstLoad = true;
-let hist = document.getElementById('hist');
+
+const hist = document.getElementById('hist');
+const hud = document.getElementById('hud');
 
 /* ---------- helpers ---------- */
 function dayKey(iso) {
@@ -144,25 +167,42 @@ function rowTime(iso) {
 function rowDate(iso) {
   return new Date(iso).toLocaleDateString([], {month: 'short', day: 'numeric'});
 }
-
-/* ---------- collapse ---------- */
-function setCollapsed(value) {
-  hist.classList.toggle('collapsed', value);
-  try { localStorage.setItem('histOpen', value ? '0' : '1'); } catch (e) {}
+function dayRange(key) {
+  const parts = key.split('-').map(Number);
+  const start = new Date(parts[0], parts[1] - 1, parts[2]);
+  const end = new Date(parts[0], parts[1] - 1, parts[2] + 1);
+  return {from: start.toISOString(), to: end.toISOString()};
 }
-(function initCollapsed() {
-  let stored = null;
-  try { stored = localStorage.getItem('histOpen'); } catch (e) {}
-  if (stored === null) setCollapsed(window.innerWidth < 700);
-  else setCollapsed(stored === '0');
+function reportsUrl() {
+  if (state.selected) {
+    const r = dayRange(state.selected);
+    return '/api/reports?from=' + encodeURIComponent(r.from) + '&to=' + encodeURIComponent(r.to);
+  }
+  return '/api/reports?days=' + state.uiDays;
+}
+
+/* ---------- collapse (HUD + history) ---------- */
+function persist(key, open) { try { localStorage.setItem(key, open ? '1' : '0'); } catch (e) {} }
+function load(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+
+function setHudCollapsed(v) { hud.classList.toggle('collapsed', v); persist('hudOpen', !v); }
+function setHistCollapsed(v) { hist.classList.toggle('collapsed', v); persist('histOpen', !v); }
+
+(function initFolds() {
+  const small = window.innerWidth < 700;
+  const h = load('hudOpen'), s = load('histOpen');
+  setHudCollapsed(h === null ? small : h === '0');
+  setHistCollapsed(s === null ? small : s === '0');
 })();
+
+document.getElementById('hudhead').addEventListener('click', () =>
+  setHudCollapsed(!hud.classList.contains('collapsed')));
 document.getElementById('histbar').addEventListener('click', (e) => {
   if (e.target.closest('button')) return;
-  setCollapsed(!hist.classList.contains('collapsed'));
+  setHistCollapsed(!hist.classList.contains('collapsed'));
 });
-document.getElementById('toggle').addEventListener('click', () => {
-  setCollapsed(!hist.classList.contains('collapsed'));
-});
+document.getElementById('toggle').addEventListener('click', () =>
+  setHistCollapsed(!hist.classList.contains('collapsed')));
 
 /* ---------- calendar ---------- */
 const DOW = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -186,13 +226,13 @@ function renderCalendar() {
   const days = new Date(y, m + 1, 0).getDate();
   for (let d = 1; d <= days; d++) {
     const key = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
-    const n = counts[key] || 0;
+    const n = state.counts[key] || 0;
     const el = document.createElement('div');
-    el.className = 'day ' + (n ? 'has' : 'off') + (key === selected ? ' sel' : '');
+    el.className = 'day ' + (n ? 'has' : 'off') + (key === state.selected ? ' sel' : '');
     el.textContent = d;
     if (n) {
       el.title = n + ' point(s)';
-      el.onclick = () => { selected = key; renderCalendar(); applyFilter(); setCollapsed(false); };
+      el.onclick = () => { state.selected = key; renderCalendar(); setHistCollapsed(false); refresh(); };
     }
     grid.appendChild(el);
   }
@@ -209,26 +249,23 @@ document.getElementById('next').addEventListener('click', (e) => {
 });
 document.getElementById('allbtn').addEventListener('click', (e) => {
   e.stopPropagation();
-  selected = null;
+  state.selected = null;
   renderCalendar();
-  applyFilter();
+  refresh();
 });
 document.getElementById('calbtn').addEventListener('click', (e) => {
   e.stopPropagation();
   const cal = document.getElementById('cal');
   cal.hidden = !cal.hidden;
-  if (!cal.hidden) { setCollapsed(false); renderCalendar(); }
+  if (!cal.hidden) { setHistCollapsed(false); renderCalendar(); }
 });
 
 /* ---------- render ---------- */
-function applyFilter() {
-  const visible = selected
-    ? allPoints.filter(p => dayKey(p.when) === selected)
-    : allPoints;
+function render() {
+  const visible = state.reports;
 
   layer.clearLayers();
   markers = [];
-
   visible.forEach((x, i) => {
     const newest = i === visible.length - 1;
     const m = L.circleMarker([x.lat, x.lon], {
@@ -245,18 +282,17 @@ function applyFilter() {
   if (visible.length > 1) {
     L.polyline(visible.map(p => [p.lat, p.lon]), {color: '#1a73e8', weight: 2, opacity: .5}).addTo(layer);
   }
-  if (visible.length && firstLoad) {
+  if (visible.length && state.firstLoad) {
     map.fitBounds(visible.map(p => [p.lat, p.lon]), {padding: [40, 40]});
-    firstLoad = false;
+    state.firstLoad = false;
   }
 
-  // list
   const list = document.getElementById('list');
   list.innerHTML = '';
   if (!visible.length) {
     const el = document.createElement('div');
     el.className = 'empty';
-    el.textContent = selected ? 'no points on this date' : 'no reports yet';
+    el.textContent = state.selected ? 'no points on this date' : 'no reports in this window';
     list.appendChild(el);
   }
   for (let i = visible.length - 1; i >= 0; i--) {
@@ -269,29 +305,21 @@ function applyFilter() {
     list.appendChild(row);
   }
 
-  // header chip + title
   const chip = document.getElementById('chip');
-  if (selected) {
+  if (state.selected) {
     chip.hidden = false;
-    chip.textContent = selected + '  ×';
-    chip.onclick = (e) => {
-      e.stopPropagation();
-      selected = null;
-      renderCalendar();
-      applyFilter();
-    };
+    chip.textContent = state.selected + '  \u00d7';
+    chip.onclick = (e) => { e.stopPropagation(); state.selected = null; renderCalendar(); refresh(); };
   } else {
     chip.hidden = true;
   }
-  document.getElementById('histtitle').textContent =
-    'History · ' + visible.length + (selected ? '/' + allPoints.length : '');
+  document.getElementById('histtitle').textContent = 'History \u00b7 ' + visible.length;
 
-  // HUD
   const last = visible.length ? visible[visible.length - 1] : null;
   document.getElementById('count').textContent =
-    visible.length + ' report(s)' + (selected ? ' on ' + selected : '');
+    visible.length + ' report(s)' + (state.selected ? '' : ' \u00b7 last ' + state.uiDays + 'd');
   document.getElementById('seen').textContent =
-    last ? 'last seen ' + new Date(last.when).toLocaleString() : 'nothing in range';
+    last ? 'last seen ' + new Date(last.when).toLocaleString() : 'nothing in this range';
 
   const open = document.getElementById('open');
   if (last) {
@@ -320,33 +348,37 @@ function setBanner(err, lastOk) {
 
 async function refresh() {
   try {
-    const r = await fetch('/api/reports', {cache: 'no-store'});
-    const data = await r.json();
-    setBanner(data.error, data.last_ok);
-    if (data.error && !(data.reports && data.reports.length)) {
-      throw new Error(data.error);
-    }
+    const tz = new Date().getTimezoneOffset();
+    const [sumRes, repRes] = await Promise.all([
+      fetch('/api/summary?tz=' + tz, {cache: 'no-store'}),
+      fetch(reportsUrl(), {cache: 'no-store'}),
+    ]);
+    const sum = await sumRes.json();
+    const rep = await repRes.json();
+    if (sum.error && !(sum.count)) throw new Error(sum.error);
 
-    allPoints = data.reports || [];
-    counts = {};
-    allPoints.forEach(p => {
-      const k = dayKey(p.when);
-      counts[k] = (counts[k] || 0) + 1;
-    });
+    state.counts = sum.days || {};
+    state.uiDays = sum.ui_days || 7;
+    state.meta = sum;
+    state.reports = rep.reports || [];
 
-    // keep the picker on a month that has data
-    if (allPoints.length) {
-      const newest = new Date(allPoints[allPoints.length - 1].when);
-      if (firstLoad) calMonth = new Date(newest.getFullYear(), newest.getMonth(), 1);
-    }
+    setBanner(sum.error, sum.last_ok);
 
     document.getElementById('meta').textContent =
-      (data.stored_since ? 'since ' + new Date(data.stored_since).toLocaleDateString() : '') +
-      (data.keep_days ? ' · keep ' + data.keep_days + 'd' : ' · keep all') +
-      (data.max_points ? '/' + data.max_points : '') +
-      ' · updated ' + new Date().toLocaleTimeString();
+      (sum.stored_since ? 'since ' + new Date(sum.stored_since).toLocaleDateString() : '') +
+      (sum.keep_days ? ' \u00b7 keep ' + sum.keep_days + 'd' : ' \u00b7 keep all') +
+      (sum.max_points ? '/' + sum.max_points : '') +
+      ' \u00b7 updated ' + new Date().toLocaleTimeString();
 
-    applyFilter();
+    if (state.firstLoad) {
+      const keys = Object.keys(state.counts).sort();
+      if (keys.length) {
+        const p = keys[keys.length - 1].split('-').map(Number);
+        calMonth = new Date(p[0], p[1] - 1, 1);
+      }
+    }
+
+    render();
     if (!document.getElementById('cal').hidden) renderCalendar();
   } catch (e) {
     document.getElementById('count').innerHTML = '<span class="err">' + e.message + '</span>';
@@ -357,8 +389,9 @@ async function refresh() {
 let deferredPrompt = null;
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; });
 const installBtn = document.getElementById('install');
-const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-if (standalone) installBtn.style.display = 'none';
+if (window.matchMedia('(display-mode: standalone)').matches || navigator.standalone) {
+  installBtn.style.display = 'none';
+}
 installBtn.onclick = async (e) => {
   e.preventDefault();
   if (deferredPrompt) { deferredPrompt.prompt(); deferredPrompt = null; return; }
