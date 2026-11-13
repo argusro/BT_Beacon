@@ -18,26 +18,55 @@ Only the dashboard is published. `6176` and `6969` stay on the compose network.
 
 ## Deploy
 
+The repository is **private**, so the clone needs credentials. Pick one:
+
+**A. SSH deploy key (recommended for a server)** — read-only, scoped to this repo:
+
 ```bash
-# on the VPS
+ssh-keygen -t ed25519 -C "bt-beacon-vps" -f ~/.ssh/bt_beacon -N ''
+cat ~/.ssh/bt_beacon.pub
+# add it at: https://github.com/argusro/BT_Beacon/settings/keys  (Deploy keys, read-only)
+
+cat >> ~/.ssh/config <<'EOF'
+Host github-bt
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/bt_beacon
+EOF
+```
+
+```bash
+REPO_URL=git@github-bt:argusro/BT_Beacon.git bash deploy.sh
+```
+
+**B. HTTPS with a fine-grained token** (`Contents: Read` on this repo):
+
+```bash
+REPO_URL=https://<token>@github.com/argusro/BT_Beacon.git bash deploy.sh
+```
+
+Prefer `GIT_ASKPASS`/a credential helper over putting the token in the URL — it
+ends up in shell history and in `.git/config`.
+
+**C. By hand** (no script):
+
+```bash
 git clone --filter=blob:none --sparse --depth 1 https://github.com/argusro/BT_Beacon.git /opt/bt-beacon
 cd /opt/bt-beacon
 git sparse-checkout set scripts/haystack scripts/map_server.py scripts/decrypt_reports.py scripts/web
 bash scripts/haystack/vps/deploy.sh
 ```
 
-Or simply run the script once it exists on the box — it performs the sparse
-checkout itself and re-syncs on every later invocation:
+`deploy.sh` defaults `REPO_URL` to
+`https://github.com/argusro/BT_Beacon.git` and `APP_DIR` to `/opt/bt-beacon`, so
+on a box with cached credentials it is just:
 
 ```bash
-bash deploy.sh
-# ... later, to update:
-bash deploy.sh
+bash deploy.sh          # first run: clone + build + start
+bash deploy.sh          # later: fetch, reset, rebuild changed services
 ```
 
-`deploy.sh` does a sparse checkout of only the watcher paths, creates `.env`
-with a random dashboard password on first run, then `docker compose up -d
---build` (only changed services are recreated).
+It prints the resolved repo URL first, so you can see what it is about to use.
 
 ## First run: Apple login
 

@@ -12,6 +12,11 @@
 #
 # Usage (on the VPS):
 #   bash deploy.sh
+#   REPO_URL=git@github-bt:argusro/BT_Beacon.git bash deploy.sh
+#
+# The repository is private. Either add an SSH deploy key (read-only) and use an
+# ssh URL, or pass a token URL:
+#   REPO_URL=https://<token>@github.com/argusro/BT_Beacon.git bash deploy.sh
 #
 # Environment:
 #   REPO_URL   default https://github.com/argusro/BT_Beacon.git
@@ -43,11 +48,20 @@ if ! docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
+echo "==> repo    : $REPO_URL"
+echo "==> branch  : $BRANCH"
+echo "==> app dir : $APP_DIR"
+
 if [ ! -d "$APP_DIR/.git" ]; then
-  echo "==> sparse clone $REPO_URL -> $APP_DIR"
+  echo "==> sparse clone"
   mkdir -p "$(dirname "$APP_DIR")"
   git clone --filter=blob:none --sparse --depth 1 --branch "$BRANCH" \
-    "$REPO_URL" "$APP_DIR"
+    "$REPO_URL" "$APP_DIR" || {
+      echo "!! clone failed." >&2
+      echo "   The repo is private: set REPO_URL to an SSH deploy key or a token URL." >&2
+      echo "   e.g. REPO_URL=git@github-bt:argusro/BT_Beacon.git bash deploy.sh" >&2
+      exit 1
+    }
   cd "$APP_DIR"
   git sparse-checkout set "${SPARSE_PATHS[@]}"
 else
