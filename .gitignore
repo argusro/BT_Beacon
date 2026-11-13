@@ -16,3 +16,6 @@ keys/*_history.json
 # local virtualenvs
 .venv/
 __pycache__/
+
+# deployment secrets
+scripts/haystack/vps/.env

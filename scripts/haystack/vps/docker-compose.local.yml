@@ -51,6 +51,12 @@ services:
     volumes:
       - ../../../keys:/keys:ro
       - history:/data
+      # dev: edit these on the host instead of rebuilding the image.
+      # index.html is re-read on every request (browser refresh is enough);
+      # Python changes need `docker compose restart dashboard`.
+      - ../../../scripts/map_server.py:/app/scripts/map_server.py:ro
+      - ../../../scripts/decrypt_reports.py:/app/scripts/decrypt_reports.py:ro
+      - ../../../scripts/web:/app/scripts/web:ro
     ports:
       - "8099:8080"
     networks: [mh]

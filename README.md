@@ -178,6 +178,10 @@ resulting session lives in `auth.json` inside the `mh_data` volume.
 Caddy. Ports 6176 and 6969 are **not** published, so the raw endpoint is never
 reachable from outside the compose network.
 
+Full guide: [`scripts/haystack/vps/README.md`](scripts/haystack/vps/README.md).
+`scripts/haystack/vps/deploy.sh` does a sparse checkout of only the watcher
+paths, then `docker compose up -d --build` (only changed services restart).
+
 ```bash
 cd scripts/haystack/vps
 # put your hostname and a password hash in Caddyfile first:

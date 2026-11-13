@@ -39,178 +39,8 @@ from decrypt_reports import decrypt_payload, load_keys  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 AUTH = None  # (user, password) when --auth is given
+WEB_DIR = ROOT / "scripts" / "web"  # served as static files, re-read per request
 
-PAGE = """<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>BT_Beacon</title>
-<meta name="theme-color" content="#1a73e8">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="Beacon">
-<link rel="manifest" href="/manifest.webmanifest">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<style>
-  html, body, #map { height: 100%; margin: 0; }
-  .panel {
-    position: absolute; z-index: 1000; background: rgba(255,255,255,.96);
-    border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.3);
-    font: 13px/1.45 system-ui, sans-serif;
-  }
-  #hud { top: 10px; left: 50px; right: 10px; max-width: 340px; padding: 10px 12px; }
-  #hud b { font-size: 15px; }
-  #open { display:block; margin:9px 0 4px; padding:11px 12px; background:#1a73e8;
-          color:#fff; text-align:center; text-decoration:none; border-radius:6px;
-          font-weight:600; font-size:15px; }
-  #open.off { background:#9aa0a6; pointer-events:none; }
-  #hud a.alt { color:#1a73e8; text-decoration:none; font-size:12px; margin-right:12px; }
-  #hud small { color:#555; }
-  #hist { top: auto; bottom: 10px; left: 50px; width: 260px; max-height: 42vh;
-          display: flex; flex-direction: column; overflow: hidden; }
-  #hist h3 { margin: 0; padding: 8px 10px; font-size: 12px; text-transform: uppercase;
-             letter-spacing: .04em; color: #555; border-bottom: 1px solid #eee; }
-  #list { overflow-y: auto; }
-  .row { padding: 7px 10px; border-bottom: 1px solid #f2f2f2; cursor: pointer; }
-  .row:hover { background: #f0f6ff; }
-  .row .t { font-weight: 600; }
-  .row .d { color: #666; font-size: 11px; }
-  #hint { display:none; bottom: 10px; right: 10px; max-width: 280px; padding: 12px; }
-  #hint button { margin-top: 4px; padding: 6px 12px; }
-  .err { color: #b00; }
-</style>
-</head>
-<body>
-<div id="map"></div>
-<div id="hud" class="panel">
-  <b id="count">loading&hellip;</b><br>
-  <span id="seen"></span><br>
-  <a id="open" class="off" href="#">Open latest in Google Maps</a>
-  <a id="apple" class="alt" href="#">Apple Maps</a>
-  <a id="copy" class="alt" href="#">Copy coordinates</a>
-  <a id="install" class="alt" href="#">Add to Home Screen</a>
-  <br><small id="meta"></small>
-</div>
-<div id="hist" class="panel">
-  <h3 id="histtitle">History</h3>
-  <div id="list"></div>
-</div>
-<div id="hint" class="panel">
-  <b>Add to Home Screen</b>
-  <p id="hinttext" style="margin:8px 0 10px;"></p>
-  <button id="hintclose">Got it</button>
-</div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
-const map = L.map('map').setView([0, 0], 2);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19, attribution: '&copy; OpenStreetMap'
-}).addTo(map);
-
-let layer = L.layerGroup().addTo(map);
-let markers = [];
-let first = true;
-
-function rowLabel(x) {
-  return new Date(x.when).toLocaleDateString([], {month: 'short', day: 'numeric'});
-}
-function rowTime(x) {
-  return new Date(x.when).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
-}
-
-async function refresh() {
-  try {
-    const r = await fetch('/api/reports', {cache: 'no-store'});
-    const data = await r.json();
-    if (data.error) throw new Error(data.error);
-
-    layer.clearLayers();
-    markers = [];
-    const rs = data.reports;
-    const pts = rs.map(x => [x.lat, x.lon]);
-
-    rs.forEach((x, i) => {
-      const newest = i === rs.length - 1;
-      const m = L.circleMarker([x.lat, x.lon], {
-        radius: newest ? 10 : 5,
-        color: newest ? '#d00' : '#1a73e8',
-        weight: 2, fillOpacity: newest ? 0.95 : 0.5
-      }).bindPopup(
-        `<b>${new Date(x.when).toLocaleString()}</b><br>` +
-        `accuracy ${x.accuracy} m<br>${x.lat.toFixed(6)}, ${x.lon.toFixed(6)}`
-      ).addTo(layer);
-      markers.push(m);
-    });
-
-    if (pts.length > 1) L.polyline(pts, {color: '#1a73e8', weight: 2, opacity: .5}).addTo(layer);
-    if (pts.length && first) { map.fitBounds(pts, {padding: [40, 40]}); first = false; }
-
-    document.getElementById('count').textContent = rs.length + ' report(s)';
-    const last = rs.length ? rs[rs.length - 1] : null;
-    document.getElementById('seen').textContent =
-      last ? 'last seen ' + new Date(last.when).toLocaleString() : 'no reports yet';
-    document.getElementById('meta').textContent =
-      (data.stored_since ? 'since ' + new Date(data.stored_since).toLocaleDateString() : '') +
-      (data.keep_days ? ' · keep ' + data.keep_days + 'd' : ' · keep all') +
-      ' · updated ' + new Date().toLocaleTimeString();
-
-    const list = document.getElementById('list');
-    list.innerHTML = '';
-    for (let i = rs.length - 1; i >= 0; i--) {
-      const x = rs[i];
-      const row = document.createElement('div');
-      row.className = 'row';
-      row.innerHTML = `<span class="t">${rowTime(x)}</span> ` +
-                      `<span class="d">${rowLabel(x)} · ${x.accuracy} m</span>`;
-      row.onclick = () => { map.setView([x.lat, x.lon], 17); markers[i] && markers[i].openPopup(); };
-      list.appendChild(row);
-    }
-    document.getElementById('histtitle').textContent = 'History · ' + rs.length;
-
-    const open = document.getElementById('open');
-    if (last) {
-      const q = last.lat.toFixed(6) + ',' + last.lon.toFixed(6);
-      open.href = 'https://www.google.com/maps/search/?api=1&query=' + q;
-      open.classList.remove('off');
-      document.getElementById('apple').href = 'https://maps.apple.com/?ll=' + q + '&q=Beacon';
-      document.getElementById('copy').onclick = () =>
-        navigator.clipboard && navigator.clipboard.writeText(q);
-    } else {
-      open.classList.add('off');
-    }
-  } catch (e) {
-    document.getElementById('count').innerHTML = '<span class="err">' + e.message + '</span>';
-  }
-}
-
-// --- install / add to home screen ---
-let deferredPrompt = null;
-window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; });
-
-const installBtn = document.getElementById('install');
-const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-if (standalone) installBtn.style.display = 'none';
-
-installBtn.onclick = async (e) => {
-  e.preventDefault();
-  if (deferredPrompt) { deferredPrompt.prompt(); deferredPrompt = null; return; }
-  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
-  document.getElementById('hinttext').textContent = ios
-    ? 'In Safari tap the Share button (square with an arrow), then "Add to Home Screen". The icon opens this page and fetches the latest fix.'
-    : 'Open the browser menu and choose "Install app" or "Add to Home screen".';
-  document.getElementById('hint').style.display = 'block';
-};
-document.getElementById('hintclose').onclick = () =>
-  document.getElementById('hint').style.display = 'none';
-
-refresh();
-setInterval(refresh, 30000);
-</script>
-</body>
-</html>
-"""
 
 MANIFEST = {
     "name": "BT_Beacon",
@@ -396,7 +226,11 @@ class Handler(BaseHTTPRequestHandler):
             payload = build_payload(self.args, self.keys, self.history)
             self._send(200, "application/json", json.dumps(payload).encode())
         elif self.path in ("/", "/index.html"):
-            self._send(200, "text/html; charset=utf-8", PAGE.encode())
+            try:
+                body = (pathlib.Path(WEB_DIR) / "index.html").read_bytes()
+                self._send(200, "text/html; charset=utf-8", body)
+            except OSError as exc:  # noqa: BLE001
+                self._send(500, "text/plain", f"cannot read index.html: {exc}".encode())
         elif self.path == "/manifest.webmanifest":
             self._send(200, "application/manifest+json", json.dumps(MANIFEST).encode())
         elif self.path in ("/apple-touch-icon.png", "/icon.png", "/favicon.ico"):
@@ -417,7 +251,7 @@ def lan_ip() -> str:
 
 
 def main() -> int:
-    global AUTH, ICON
+    global AUTH, ICON, WEB_DIR
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8099)
@@ -436,6 +270,8 @@ def main() -> int:
                         help="drop history older than this many days, 0 = keep all")
     parser.add_argument("--auth", default=None,
                         help="HTTP basic auth as user:password")
+    parser.add_argument("--web-dir", default=None,
+                        help="directory with index.html (default scripts/web)")
     args = parser.parse_args()
 
     if args.auth:
@@ -443,6 +279,9 @@ def main() -> int:
         if not user or not password:
             parser.error("--auth must be user:password")
         AUTH = (user, password)
+
+    if args.web_dir:
+        WEB_DIR = pathlib.Path(args.web_dir)
 
     keys = load_keys(args.name, args.keys_file)
 
