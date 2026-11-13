@@ -68,6 +68,10 @@
 
   #hint { display:none; bottom: 10px; right: 10px; max-width: 280px; padding: 12px; }
   #hint button { margin-top: 4px; padding: 6px 12px; }
+  #banner { top: 10px; left: 50%; transform: translateX(-50%); width: min(92vw, 520px);
+            padding: 8px 12px; background: #fff8e1; border: 1px solid #ffd54f;
+            color: #5d4a00; font-size: 12px; z-index: 1200; }
+  #banner code { background: #fff; padding: 1px 5px; border-radius: 3px; font-size: 11px; }
   .err { color: #b00; }
 </style>
 </head>
@@ -83,6 +87,8 @@
   <a id="install" class="alt" href="#">Add to Home Screen</a>
   <br><small id="meta"></small>
 </div>
+
+<div id="banner" class="panel" hidden></div>
 
 <div id="hist" class="panel collapsed">
   <div id="histbar">
@@ -301,11 +307,25 @@ function applyFilter() {
 }
 
 /* ---------- data ---------- */
+function setBanner(err, lastOk) {
+  const b = document.getElementById('banner');
+  if (!err) { b.hidden = true; return; }
+  const ago = lastOk ? new Date(lastOk).toLocaleString() : 'never';
+  b.innerHTML = '<b>Background fetch failed</b><br>' + err +
+    '<br><small>last success: ' + ago +
+    '. If this is an Apple session problem, renew it on the server:<br>' +
+    '<code>bash deploy.sh login</code></small>';
+  b.hidden = false;
+}
+
 async function refresh() {
   try {
     const r = await fetch('/api/reports', {cache: 'no-store'});
     const data = await r.json();
-    if (data.error) throw new Error(data.error);
+    setBanner(data.error, data.last_ok);
+    if (data.error && !(data.reports && data.reports.length)) {
+      throw new Error(data.error);
+    }
 
     allPoints = data.reports || [];
     counts = {};

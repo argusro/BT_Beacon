@@ -40,6 +40,7 @@ from decrypt_reports import decrypt_payload, load_keys  # noqa: E402
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 AUTH = None  # (user, password) when --auth is given
 WEB_DIR = ROOT / "scripts" / "web"  # served as static files, re-read per request
+STATE = {"last_ok": None, "last_error": None}  # set by every fetch / poll
 
 
 MANIFEST = {
@@ -149,7 +150,8 @@ def collect(args, keys: dict, history: History) -> None:
     try:
         raw = fetch_reports(args, list(keys))
     except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"fetch failed: {exc}") from exc
+        STATE["last_error"] = f"fetch failed: {exc}"
+        raise RuntimeError(STATE["last_error"]) from exc
 
     fresh = []
     for report in raw:
@@ -171,14 +173,16 @@ def collect(args, keys: dict, history: History) -> None:
         fresh.append(point)
 
     history.merge(fresh)
+    STATE["last_ok"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    STATE["last_error"] = None
 
 
 def build_payload(args, keys: dict, history: History) -> dict:
+    error = None
     try:
         collect(args, keys, history)
     except RuntimeError as exc:
-        if not history.snapshot():
-            return {"error": str(exc), "keep_days": args.keep_days}
+        error = str(exc)
     points = history.snapshot()
     return {
         "count": len(points),
@@ -187,6 +191,8 @@ def build_payload(args, keys: dict, history: History) -> dict:
         "keep_days": args.keep_days,
         "max_points": args.max_points,
         "keys": len(keys),
+        "error": error,
+        "last_ok": STATE["last_ok"],
     }
 
 

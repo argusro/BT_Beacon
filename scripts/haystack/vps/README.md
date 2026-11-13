@@ -79,13 +79,33 @@ It prints the resolved repo URL first, so you can see what it is about to use.
 The endpoint needs an Apple session once:
 
 ```bash
-cd ~/bt-beacon/scripts/haystack/vps
-docker compose run --rm endpoint
+bash deploy.sh login
 ```
 
-It asks for Apple ID → password → trusted-device code, then writes
-`auth.json` into the `mh-data` volume. Re-running is only needed if Apple
-invalidates the session.
+That starts Anisette, stops the crashing endpoint, runs the interactive login
+(Apple ID → password → trusted-device code) and brings the stack back up. It
+writes `auth.json` into the `mh-data` volume.
+
+## When the Apple session expires
+
+Apple's `searchPartyToken` is long-lived but not permanent — it dies on a
+password change, a security event, or Apple invalidating it. Symptoms:
+
+- the dashboard shows a yellow **"Background fetch failed"** banner and stops
+  gaining points
+- `docker compose logs endpoint` shows `401` from `acsnservice`
+
+Renew it with the same command — no data is lost, the history file is separate:
+
+```bash
+bash deploy.sh login
+```
+
+There is deliberately **no renewal button in the web UI**: the login needs the
+Apple password plus a trusted-device code, and shipping a form that accepts your
+Apple ID password into an HTTP dashboard (basic auth, often plain HTTP) is a bad
+trade. The banner tells you it's needed; the command does it over an interactive
+TTY.
 
 ## Keys
 

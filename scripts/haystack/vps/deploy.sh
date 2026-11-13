@@ -8,7 +8,8 @@
 # The firmware (src/, platformio.ini) is not fetched.
 #
 # Usage (on the VPS):
-#   bash deploy.sh
+#   bash deploy.sh            deploy / update
+#   bash deploy.sh login      re-run the interactive Apple login (session expired)
 #   REPO_URL=git@github-bt:argusro/BT_Beacon.git bash deploy.sh
 #
 # The repository is private. Either add an SSH deploy key (read-only) and use an
@@ -40,6 +41,28 @@ fi
 if ! docker compose version >/dev/null 2>&1; then
   echo "!! docker compose v2 is required" >&2
   exit 1
+fi
+
+MODE="${1:-deploy}"
+case "$MODE" in
+  deploy|login) ;;
+  *) echo "usage: bash deploy.sh [deploy|login]" >&2; exit 2 ;;
+esac
+
+# Renew the Apple session: interactive Apple ID + trusted-device code.
+if [ "$MODE" = "login" ]; then
+  if [ ! -d "$APP_DIR/.git" ]; then
+    echo "!! $APP_DIR is not deployed yet - run 'bash deploy.sh' first" >&2
+    exit 1
+  fi
+  cd "$APP_DIR/scripts/haystack/vps"
+  docker compose up -d anisette
+  docker compose stop endpoint >/dev/null 2>&1 || true
+  echo "==> interactive Apple login (Ctrl+C when it says 'serving at :6176')"
+  docker compose run --rm endpoint || true
+  docker compose up -d
+  docker compose ps
+  exit 0
 fi
 
 echo "==> repo    : $REPO_URL"
@@ -94,4 +117,4 @@ docker compose ps
 echo
 echo "dashboard: http://<server>:8099  (credentials in .env)"
 echo "first run? log in to Apple once:"
-echo "  docker compose run --rm endpoint"
+echo "  bash deploy.sh login"

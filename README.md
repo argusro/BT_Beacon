@@ -356,6 +356,9 @@ Alternatives:
   alone. This setup can break at any time.
 - **Power.** Continuous 1–2 s advertising flattens a small LiPo in a day or two.
   Light-sleep between bursts is the next optimisation.
+- **Apple session expiry.** The stored session lasts weeks to months, then needs
+  a fresh login (`bash deploy.sh login` on the VPS). The dashboard shows a
+  banner when fetching starts failing; history already collected is unaffected.
 - **Privacy of the key.** Anyone holding `keys/beacon.priv.hex` can decrypt every
   report ever filed for this beacon. Treat it like an SSH private key. It is
   gitignored and deliberately **not** in the repository — back it up somewhere
