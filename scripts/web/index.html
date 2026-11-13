@@ -76,6 +76,8 @@
   .row:hover { background: #f0f6ff; }
   .row .t { font-weight: 600; }
   .row .d { color: #666; font-size: 11px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+         margin-right: 6px; vertical-align: middle; }
   .empty { padding: 10px; color: #888; font-size: 12px; }
 
   #hint { display:none; bottom: 10px; right: 10px; max-width: 280px; padding: 12px; }
@@ -174,9 +176,15 @@ const state = {
   reports: [],      // server-filtered window
   uiDays: 7,
   tag: '',          // '' = all accessible tags
+  tagNames: {},     // tag_id -> name
   meta: {},
   firstLoad: true,
 };
+
+// stable colour per tag id, so a tag keeps its colour across reloads
+const PALETTE = ['#1a73e8', '#e37400', '#188038', '#a142f4', '#d93025', '#007b83'];
+function colorOf(id) { return PALETTE[Number(id) % PALETTE.length] || '#1a73e8'; }
+function nameOf(id) { return state.tagNames[String(id)] || ''; }
 let calMonth = new Date();
 let markers = [];
 
@@ -300,20 +308,27 @@ function render() {
   markers = [];
   visible.forEach((x, i) => {
     const newest = i === visible.length - 1;
+    const color = colorOf(x.tag_id);
     const m = L.circleMarker([x.lat, x.lon], {
       radius: newest ? 10 : 5,
-      color: newest ? '#d00' : '#1a73e8',
-      weight: 2, fillOpacity: newest ? 0.95 : 0.5
+      color: color,
+      weight: newest ? 3 : 2,
+      fillOpacity: newest ? 0.9 : 0.45
     }).bindPopup(
-      `<b>${new Date(x.when).toLocaleString()}</b><br>` +
+      `<b>${nameOf(x.tag_id) || 'tag'} &middot; ${new Date(x.when).toLocaleString()}</b><br>` +
       `accuracy ${x.accuracy} m<br>${x.lat.toFixed(6)}, ${x.lon.toFixed(6)}`
     ).addTo(layer);
     markers.push(m);
   });
 
-  if (visible.length > 1) {
-    L.polyline(visible.map(p => [p.lat, p.lon]), {color: '#1a73e8', weight: 2, opacity: .5}).addTo(layer);
-  }
+  // one line per tag - a single line would zigzag between devices
+  const byTag = {};
+  visible.forEach(p => (byTag[p.tag_id] = byTag[p.tag_id] || []).push([p.lat, p.lon]));
+  Object.entries(byTag).forEach(([id, pts]) => {
+    if (pts.length > 1) {
+      L.polyline(pts, {color: colorOf(id), weight: 2, opacity: .5}).addTo(layer);
+    }
+  });
   if (visible.length && state.firstLoad) {
     map.fitBounds(visible.map(p => [p.lat, p.lon]), {padding: [40, 40]});
     state.firstLoad = false;
@@ -331,8 +346,9 @@ function render() {
     const x = visible[i];
     const row = document.createElement('div');
     row.className = 'row';
-    row.innerHTML = `<span class="t">${rowTime(x.when)}</span> ` +
-                    `<span class="d">${rowDate(x.when)} · ${x.accuracy} m</span>`;
+    row.innerHTML = `<span class="dot" style="background:${colorOf(x.tag_id)}"></span>` +
+                    `<span class="t">${rowTime(x.when)}</span> ` +
+                    `<span class="d">${nameOf(x.tag_id)} &middot; ${rowDate(x.when)} &middot; ${x.accuracy} m</span>`;
     row.onclick = () => { map.setView([x.lat, x.lon], 17); markers[i] && markers[i].openPopup(); };
     list.appendChild(row);
   }
@@ -449,6 +465,8 @@ async function refresh() {
     state.uiDays = sum.ui_days === undefined ? state.uiDays : sum.ui_days;
     state.meta = sum;
     state.reports = rep.reports || [];
+    state.tagNames = {};
+    (sum.tags || []).forEach(t => { state.tagNames[String(t.id)] = t.name; });
 
     renderTagSelect(sum.tags || []);
     const adminLink = document.getElementById('adminlink');
