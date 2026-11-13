@@ -3,12 +3,9 @@
 # Deploy / refresh the Find My watcher on a VPS.
 #
 # Only the watcher part of the repository is checked out (sparse checkout):
-#   scripts/haystack/**            endpoint Dockerfile + patched client + compose
-#   scripts/map_server.py          dashboard
-#   scripts/decrypt_reports.py     report decryption
-#   scripts/web/**                 static site
+#   scripts/**   endpoint Dockerfile + patched client + compose + dashboard
 #
-# The firmware, PlatformIO config and key generation are not fetched.
+# The firmware (src/, platformio.ini) is not fetched.
 #
 # Usage (on the VPS):
 #   bash deploy.sh
@@ -33,10 +30,7 @@ APP_DIR="${APP_DIR:-$HOME/bt-beacon}"
 BRANCH="${BRANCH:-master}"
 
 SPARSE_PATHS=(
-  "scripts/haystack"
-  "scripts/map_server.py"
-  "scripts/decrypt_reports.py"
-  "scripts/web"
+  "scripts"
 )
 
 if ! command -v docker >/dev/null 2>&1; then

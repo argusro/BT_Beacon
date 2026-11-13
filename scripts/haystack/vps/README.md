@@ -53,9 +53,14 @@ ends up in shell history and in `.git/config`.
 ```bash
 git clone --filter=blob:none --sparse --depth 1 https://github.com/argusro/BT_Beacon.git ~/bt-beacon
 cd ~/bt-beacon
-git sparse-checkout set scripts/haystack scripts/map_server.py scripts/decrypt_reports.py scripts/web
+git sparse-checkout set scripts      # --sparse leaves only root files until this runs
+ls                                   # -> scripts/
 bash scripts/haystack/vps/deploy.sh
 ```
+
+`--sparse` alone checks out just the top-level files (`README.md`,
+`platformio.ini`), which is why `scripts/` appears only after the
+`sparse-checkout set` step.
 
 `deploy.sh` defaults `REPO_URL` to
 `https://github.com/argusro/BT_Beacon.git` and `APP_DIR` to `$HOME/bt-beacon`
