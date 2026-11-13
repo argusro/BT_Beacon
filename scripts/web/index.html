@@ -35,6 +35,8 @@
           font-weight:600; font-size:15px; }
   #open.off { background:#9aa0a6; pointer-events:none; }
   #hud a.alt { color:#1a73e8; text-decoration:none; font-size:12px; margin-right:12px; }
+  #hud select { width: 100%; margin: 2px 0 4px; padding: 6px 8px; font: inherit;
+                border: 1px solid #ccd; border-radius: 5px; background: #fff; }
   #hud small { color:#555; }
 
   /* ---- history ---- */
@@ -97,10 +99,12 @@
     </div>
   </div>
   <div id="hudbody">
+    <select id="tagsel" hidden></select>
     <a id="open" class="off" href="#">Open latest in Google Maps</a>
     <a id="apple" class="alt" href="#">Apple Maps</a>
     <a id="copy" class="alt" href="#">Copy coordinates</a>
     <a id="install" class="alt" href="#">Add to Home Screen</a>
+    <a id="adminlink" class="alt" href="#" hidden>Admin</a>
     <br><small id="meta"></small>
   </div>
 </div>
@@ -167,6 +171,7 @@ const state = {
   selected: null,   // 'YYYY-MM-DD'
   reports: [],      // server-filtered window
   uiDays: 7,
+  tag: '',          // '' = all accessible tags
   meta: {},
   firstLoad: true,
 };
@@ -197,9 +202,13 @@ function dayRange(key) {
 function reportsPath() {
   if (state.selected) {
     const r = dayRange(state.selected);
-    return 'api/reports?from=' + encodeURIComponent(r.from) + '&to=' + encodeURIComponent(r.to);
+    return 'api/reports?from=' + encodeURIComponent(r.from) + '&to=' + encodeURIComponent(r.to) +
+           tagSuffix();
   }
-  return 'api/reports?days=' + state.uiDays;
+  return 'api/reports?days=' + state.uiDays + tagSuffix();
+}
+function tagSuffix() {
+  return state.tag ? '&tag=' + encodeURIComponent(state.tag) : '';
 }
 
 /* ---------- collapse (HUD + history) ---------- */
@@ -355,6 +364,27 @@ function render() {
   }
 }
 
+/* ---------- tag selector ---------- */
+function renderTagSelect(tags) {
+  const sel = document.getElementById('tagsel');
+  if (!tags.length || tags.length < 2) {
+    sel.hidden = true;
+    state.tag = '';
+    return;
+  }
+  sel.hidden = false;
+  const known = tags.some(t => String(t.id) === String(state.tag));
+  if (!known) state.tag = '';
+  sel.innerHTML = '<option value="">all tags</option>' +
+    tags.map(t => `<option value="${t.id}">${t.name} (${t.points})</option>`).join('');
+  sel.value = state.tag;
+}
+document.getElementById('tagsel').addEventListener('change', (e) => {
+  state.tag = e.target.value;
+  state.selected = null;
+  refresh();
+});
+
 /* ---------- data ---------- */
 function setBanner(err, lastOk) {
   const b = document.getElementById('banner');
@@ -374,7 +404,7 @@ async function refresh() {
     let sum = null;
     let apiError = null;
     try {
-      sum = await getJson('api/summary?tz=' + tz);
+      sum = await getJson('api/summary?tz=' + tz + tagSuffix());
     } catch (e) {
       apiError = e.message;   // older server without /api/summary
     }
@@ -399,6 +429,11 @@ async function refresh() {
     state.uiDays = sum.ui_days === undefined ? state.uiDays : sum.ui_days;
     state.meta = sum;
     state.reports = rep.reports || [];
+
+    renderTagSelect(sum.tags || []);
+    const adminLink = document.getElementById('adminlink');
+    adminLink.href = BASE + 'admin';
+    adminLink.hidden = !sum.admin;
 
     setBanner(apiError || sum.error, sum.last_ok);
 

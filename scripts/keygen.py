@@ -57,6 +57,12 @@ def main() -> int:
                         help="number of keys in the ring (default 96 = 24h at 15 min)")
     parser.add_argument("--fresh", action="store_true",
                         help="ignore the existing keys/beacon.priv.hex")
+    parser.add_argument("--name", default="beacon",
+                        help="tag name; writes keys/<name>_keys.json")
+    parser.add_argument("--header", default="src/beacon_keys.h",
+                        help="C header to generate for the firmware")
+    parser.add_argument("--no-header", action="store_true",
+                        help="only write keys/<name>_keys.json (for an extra tag)")
     args = parser.parse_args()
 
     if args.count < 2:
@@ -67,7 +73,7 @@ def main() -> int:
     # Slot 0 reuses the key the beacon already advertises, so reports filed
     # before the upgrade stay in the searched hash set.
     existing = ROOT / "keys" / "beacon.priv.hex"
-    if existing.exists() and not args.fresh:
+    if args.name == "beacon" and existing.exists() and not args.fresh:
         priv = bytes.fromhex(existing.read_text().strip())
         if len(priv) == 28:
             keys.append({"priv": priv, "adv": adv_from_private(priv)})
@@ -90,30 +96,37 @@ def main() -> int:
         f"static const uint8_t BEACON_KEYS[BEACON_KEY_COUNT][28] = {{\n"
         + "\n".join(entries) + "\n};\n"
     )
-    (ROOT / "src" / "beacon_keys.h").write_text(header)
-    (ROOT / "src" / "beacon_key.h").unlink(missing_ok=True)
+    if not args.no_header:
+        header_path = ROOT / args.header
+        header_path.parent.mkdir(parents=True, exist_ok=True)
+        header_path.write_text(header)
+        (ROOT / "src" / "beacon_key.h").unlink(missing_ok=True)
 
     # key store (secret)
     (ROOT / "keys").mkdir(exist_ok=True)
     store = {
         "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "name": args.name,
         "curve": "secp224r1",
         "keys": [
             {"priv": k["priv"].hex(), "adv": k["adv"].hex(), "hash_b64": hash_b64(k["adv"])}
             for k in keys
         ],
     }
-    (ROOT / "keys" / "beacon_keys.json").write_text(json.dumps(store, indent=1) + "\n")
-    (ROOT / "keys" / "beacon.priv.hex").write_text(keys[0]["priv"].hex() + "\n")
-    (ROOT / "keys" / "beacon.pub.hex").write_text(keys[0]["adv"].hex() + "\n")
+    (ROOT / "keys" / f"{args.name}_keys.json").write_text(json.dumps(store, indent=1) + "\n")
+    if args.name == "beacon":
+        (ROOT / "keys" / "beacon.priv.hex").write_text(keys[0]["priv"].hex() + "\n")
+        (ROOT / "keys" / "beacon.pub.hex").write_text(keys[0]["adv"].hex() + "\n")
 
-    print(f"generated {len(keys)} keys -> src/beacon_keys.h, keys/beacon_keys.json")
+    print(f"generated {len(keys)} keys for tag '{args.name}'")
+    print(f"  store  : keys/{args.name}_keys.json")
+    print(f"  header : {'(skipped)' if args.no_header else args.header}")
     print(f"slot 0 adv key  : {keys[0]['adv'].hex()}")
     print(f"slot 0 hash     : {hash_b64(keys[0]['adv'])}")
     print(f"slot 0 base64   : {base64.b64encode(keys[0]['adv']).decode()}")
     print()
-    print(f"rotation period : {15} min x {len(keys)} = {len(keys) * 15 / 60:.0f} h before repeating")
-    print("next: pio run -t upload, then rebuild devices.json with scripts/haystack_devices.py")
+    print(f"rotation period : 15 min x {len(keys)} = {len(keys) * 15 / 60:.0f} h before repeating")
+    print("next: pio run -t upload (for this tag), then redeploy the watcher")
     return 0
 
 

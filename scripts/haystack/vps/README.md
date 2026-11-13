@@ -82,9 +82,12 @@ The endpoint needs an Apple session once:
 bash deploy.sh login
 ```
 
-That starts Anisette, stops the crashing endpoint, runs the interactive login
-(Apple ID → password → trusted-device code) and brings the stack back up. It
-writes `auth.json` into the `mh-data` volume.
+It asks for Apple ID → password → trusted-device code, then writes
+`auth.json` into the `mh-data` volume.
+
+The `DASHBOARD_USER` / `DASHBOARD_PASS` in `.env` are not just basic auth — they
+are the **admin account** in the user database. Sign in with them and open
+`/admin` to create users and grant tags.
 
 ## When the Apple session expires
 

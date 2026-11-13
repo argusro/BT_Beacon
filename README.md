@@ -101,6 +101,20 @@ event callback.
 `scripts/keygen.py` reuses the existing `keys/beacon.priv.hex` as slot 0, so
 reports filed before the upgrade stay in the searched hash set.
 
+### Multiple tags
+
+Every tag needs its **own ring**. Never share one: both devices would advertise
+the same keys, so Apple's reports under a given hash would mix both devices'
+sightings and their locations would be indistinguishable.
+
+```bash
+python scripts/keygen.py --name tag2 --no-header    # -> keys/tag2_keys.json
+```
+
+`--no-header` skips the firmware header (use `--header src/tag2_keys.h` when you
+want one to flash). The watcher picks up every `keys/<name>_keys.json` and
+exposes each as its own tag — no restart of the beacon side needed.
+
 ### Why NimBLE, not `BLEDevice`
 
 PlatformIO `espressif32` resolves to platform 6.9.0 with **Arduino core 3.0.0**,
@@ -371,11 +385,29 @@ Alternatives:
 | `scripts/haystack_devices.py` | `devices.json` + hashed key for the frontend |
 | `scripts/decrypt_reports.py` | Decrypt a report JSON into coordinates |
 | `scripts/ble_scan.py` | Decode Apple advertisements over the air |
-| `scripts/map_server.py` | Leaflet map + decrypted JSON API (PC + iPhone on LAN) |
+| `scripts/map_server.py` | Leaflet map + windowed JSON API (PC + iPhone on LAN) |
+| `scripts/web/index.html` | map UI (static, editable without rebuild) |
+| `scripts/web/admin.html` | admin page for users and tag grants |
 | `scripts/haystack/docker_up.sh` | dockerd + network + Anisette + image |
 | `scripts/haystack/Dockerfile` | Patched endpoint image |
 | `scripts/haystack/patched/` | Patched `pypush_gsa_icloud.py` |
 | `keys/beacon.priv.hex` | **Secret** — decrypts reports; gitignored |
+
+## Users and the admin page
+
+The dashboard authenticates with **HTTP basic auth** against users stored in
+SQLite, and each user only sees the tags granted to them.
+
+| Concept | Behaviour |
+| --- | --- |
+| Bootstrap admin | `--auth user:pass` (compose reads `DASHBOARD_USER` / `DASHBOARD_PASS`) |
+| Admin page | `/admin` — create users, toggle admin, grant tags per user |
+| Non-admin | `403` on `/admin`; `/api/tags` and reports only list granted tags |
+| No users at all | dashboard is open (local development) |
+
+The Apple session stays **shared**: one account fetches reports for every tag,
+because Apple serves any authenticated client the reports for any hash. Users
+are an authorisation layer, not separate Apple logins.
 
 ## Caveats
 

@@ -36,8 +36,10 @@ services:
     command:
       - --endpoint
       - http://endpoint:6176
-      - --keys-file
-      - /keys/beacon_keys.json
+      - --keys-dir
+      - /keys
+      - --auth
+      - ${DASHBOARD_USER:-argus}:${DASHBOARD_PASS:-dev}
       - --store
       - /data/history.db
       - --keep-days
