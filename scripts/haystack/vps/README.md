@@ -133,6 +133,22 @@ Tailscale/WireGuard.
 
 ## Troubleshooting
 
+- **`endpoint` keeps restarting right after a fresh deploy** — there is no
+  `auth.json` yet. The container starts, tries to prompt for the Apple ID, gets
+  EOF (no TTY under `up -d`), and exits. Run the interactive login once:
+
+  ```bash
+  docker compose stop endpoint
+  docker compose run --rm endpoint      # Apple ID + password + trusted-device code
+  docker compose up -d
+  ```
+
+  Check whether a session already exists:
+
+  ```bash
+  docker run --rm -v bt-beacon_mh-data:/d alpine ls -l /d
+  # auth.json present -> no login needed
+  ```
 - **First query fails for ~10 s after `up`** — the endpoint retries Anisette
   every 10 s; harmless startup race.
 - **`-80045`** — Anisette backend is not macOS.
