@@ -47,6 +47,8 @@ services:
       - /data/history.json
       - --keep-days
       - "365"
+      - --max-points
+      - "20000"
       - --poll
       - "15"
       - --auth

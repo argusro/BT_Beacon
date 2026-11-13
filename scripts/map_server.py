@@ -87,9 +87,10 @@ ICON = None
 class History:
     """Merge decrypted points into a JSON file, deduplicated by payload."""
 
-    def __init__(self, path: pathlib.Path, keep_days: int = 0):
+    def __init__(self, path: pathlib.Path, keep_days: int = 0, max_points: int = 0):
         self.path = path
         self.keep_days = keep_days
+        self.max_points = max_points
         self.lock = threading.Lock()
         self.points: list[dict] = []
         if path.exists():
@@ -99,10 +100,12 @@ class History:
                 self.points = []
 
     def _trim(self) -> None:
-        if not self.keep_days:
-            return
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=self.keep_days)).isoformat()
-        self.points = [p for p in self.points if p["when"] >= cutoff]
+        if self.keep_days:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=self.keep_days)).isoformat()
+            self.points = [p for p in self.points if p["when"] >= cutoff]
+        if self.max_points and len(self.points) > self.max_points:
+            # points are sorted oldest-first: keep the newest tail
+            self.points = self.points[-self.max_points:]
 
     def merge(self, new_points: list[dict]) -> list[dict]:
         with self.lock:
@@ -182,6 +185,7 @@ def build_payload(args, keys: dict, history: History) -> dict:
         "reports": points,
         "stored_since": points[0]["when"] if points else None,
         "keep_days": args.keep_days,
+        "max_points": args.max_points,
         "keys": len(keys),
     }
 
@@ -268,6 +272,8 @@ def main() -> int:
                         help="background poll interval in minutes, 0 disables")
     parser.add_argument("--keep-days", type=int, default=365,
                         help="drop history older than this many days, 0 = keep all")
+    parser.add_argument("--max-points", type=int, default=20000,
+                        help="hard cap on stored points, oldest dropped first (0 = no cap)")
     parser.add_argument("--auth", default=None,
                         help="HTTP basic auth as user:password")
     parser.add_argument("--web-dir", default=None,
@@ -288,7 +294,7 @@ def main() -> int:
     store = pathlib.Path(args.store) if args.store else (
         ROOT / "keys" / f"{args.name}_history.json"
     )
-    history = History(store, args.keep_days)
+    history = History(store, args.keep_days, args.max_points)
     ICON = make_icon()
 
     Handler.keys = keys

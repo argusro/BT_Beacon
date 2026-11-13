@@ -270,8 +270,10 @@ Open `http://localhost:8099` on the PC. The script also prints a
 Firewall prompt the first time. `--host 127.0.0.1` keeps it off the LAN.
 
 The page has an **Open latest in Google Maps** button, an Apple Maps link, a
-copy-coordinates link and a **History** list (newest first — tap an entry to jump
-to that marker).
+copy-coordinates link and a **History** list. The list is collapsible (starts
+folded on phones, remembers your choice) and has a **calendar picker**: days with
+points are highlighted and clickable, days without data are greyed out, and
+picking one filters both the map and the list to that date.
 
 ### Add it to the iPhone home screen
 
@@ -296,7 +298,16 @@ A background poll runs every 15 minutes (`--poll`), so points keep accumulating
 even when nobody has the page open.
 
 Size: one point is ~160 bytes of JSON. At the default 15-minute poll that is
-~96 points/day → ~15 KB/day → ~5.5 MB/year, and `--keep-days 365` caps it there.
+~96 points/day → ~15 KB/day → ~5.5 MB/year. Two bounds keep it from growing
+without limit:
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `--keep-days` | 365 | drops points older than N days on every merge |
+| `--max-points` | 20000 | hard cap (~3 MB), oldest dropped first |
+
+Set either to `0` to disable that bound. The file is not rotated or split — it is
+simply trimmed in place, which keeps the code and the API simple.
 
 What it does **not** do: recover points from before you started collecting. If
 the stack is stopped for more than ~7 days, that gap is gone.
