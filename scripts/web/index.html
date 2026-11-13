@@ -94,7 +94,9 @@
   <div id="hudhead">
     <button id="hudtoggle" aria-label="Toggle details">&#9656;</button>
     <div>
-      <b id="count">loading&hellip;</b><br>
+      <b id="count">loading&hellip;</b>
+      <span id="taglabel" class="chip" hidden></span>
+      <br>
       <span id="seen"></span>
     </div>
   </div>
@@ -367,17 +369,35 @@ function render() {
 /* ---------- tag selector ---------- */
 function renderTagSelect(tags) {
   const sel = document.getElementById('tagsel');
-  if (!tags.length || tags.length < 2) {
+  const label = document.getElementById('taglabel');
+
+  if (!tags.length) {
     sel.hidden = true;
+    label.hidden = true;
     state.tag = '';
     return;
   }
+
+  if (tags.length === 1) {
+    // one tag: no switching, but make it obvious which tag is on screen
+    state.tag = String(tags[0].id);
+    sel.hidden = true;
+    label.hidden = false;
+    label.textContent = tags[0].name;
+    return;
+  }
+
   sel.hidden = false;
+  sel.disabled = false;
   const known = tags.some(t => String(t.id) === String(state.tag));
   if (!known) state.tag = '';
   sel.innerHTML = '<option value="">all tags</option>' +
     tags.map(t => `<option value="${t.id}">${t.name} (${t.points})</option>`).join('');
   sel.value = state.tag;
+
+  label.hidden = false;
+  const current = tags.find(t => String(t.id) === String(state.tag));
+  label.textContent = current ? current.name : 'all tags';
 }
 document.getElementById('tagsel').addEventListener('change', (e) => {
   state.tag = e.target.value;
