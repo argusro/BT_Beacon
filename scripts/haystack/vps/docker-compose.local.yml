@@ -39,7 +39,7 @@ services:
       - --keys-file
       - /keys/beacon_keys.json
       - --store
-      - /data/history.json
+      - /data/history.db
       - --keep-days
       - "365"
       - --max-points

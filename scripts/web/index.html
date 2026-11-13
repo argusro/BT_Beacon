@@ -8,8 +8,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Beacon">
-<link rel="manifest" href="/manifest.webmanifest">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" id="manifestlink" href="manifest.webmanifest">
+<link rel="apple-touch-icon" id="iconlink" href="apple-touch-icon.png">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
   html, body, #map { height: 100%; margin: 0; }
@@ -139,6 +139,27 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19, attribution: '&copy; OpenStreetMap'
 }).addTo(map);
 
+// The dashboard can be mounted at a sub-path (e.g. https://host/track/), so
+// every request must be relative to the page, never absolute.
+const BASE = (() => {
+  const p = location.pathname;
+  return p.endsWith('/') ? p : p + '/';
+})();
+
+// Manifest/icon are relative too, resolved against the mount path.
+document.getElementById('manifestlink').href = BASE + 'manifest.webmanifest';
+document.getElementById('iconlink').href = BASE + 'apple-touch-icon.png';
+
+async function getJson(path) {
+  const r = await fetch(BASE + path, {cache: 'no-store'});
+  const type = r.headers.get('content-type') || '';
+  if (!r.ok || !type.includes('json')) {
+    const body = (await r.text()).slice(0, 140).replace(/\s+/g, ' ');
+    throw new Error(path + ' -> HTTP ' + r.status + ' (' + (type || 'no type') + '): ' + body);
+  }
+  return r.json();
+}
+
 const layer = L.layerGroup().addTo(map);
 
 const state = {
@@ -173,12 +194,12 @@ function dayRange(key) {
   const end = new Date(parts[0], parts[1] - 1, parts[2] + 1);
   return {from: start.toISOString(), to: end.toISOString()};
 }
-function reportsUrl() {
+function reportsPath() {
   if (state.selected) {
     const r = dayRange(state.selected);
-    return '/api/reports?from=' + encodeURIComponent(r.from) + '&to=' + encodeURIComponent(r.to);
+    return 'api/reports?from=' + encodeURIComponent(r.from) + '&to=' + encodeURIComponent(r.to);
   }
-  return '/api/reports?days=' + state.uiDays;
+  return 'api/reports?days=' + state.uiDays;
 }
 
 /* ---------- collapse (HUD + history) ---------- */
@@ -349,20 +370,37 @@ function setBanner(err, lastOk) {
 async function refresh() {
   try {
     const tz = new Date().getTimezoneOffset();
-    const [sumRes, repRes] = await Promise.all([
-      fetch('/api/summary?tz=' + tz, {cache: 'no-store'}),
-      fetch(reportsUrl(), {cache: 'no-store'}),
-    ]);
-    const sum = await sumRes.json();
-    const rep = await repRes.json();
-    if (sum.error && !(sum.count)) throw new Error(sum.error);
+
+    let sum = null;
+    let apiError = null;
+    try {
+      sum = await getJson('api/summary?tz=' + tz);
+    } catch (e) {
+      apiError = e.message;   // older server without /api/summary
+    }
+
+    const rep = await getJson(reportsPath());
+
+    if (!sum) {
+      const days = {};
+      (rep.reports || []).forEach(p => {
+        const k = dayKey(p.when);
+        days[k] = (days[k] || 0) + 1;
+      });
+      sum = {count: (rep.reports || []).length, days: days, ui_days: 0,
+             keep_days: 0, max_points: 0, stored_since: null,
+             error: null, last_ok: rep.last_ok};
+      state.uiDays = 0;
+    }
+
+    if (sum.error && !sum.count) throw new Error(sum.error);
 
     state.counts = sum.days || {};
-    state.uiDays = sum.ui_days || 7;
+    state.uiDays = sum.ui_days === undefined ? state.uiDays : sum.ui_days;
     state.meta = sum;
     state.reports = rep.reports || [];
 
-    setBanner(sum.error, sum.last_ok);
+    setBanner(apiError || sum.error, sum.last_ok);
 
     document.getElementById('meta').textContent =
       (sum.stored_since ? 'since ' + new Date(sum.stored_since).toLocaleDateString() : '') +

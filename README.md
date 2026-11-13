@@ -301,7 +301,7 @@ only limits how far *back* a fetch reaches — anything already collected stays.
 A background poll runs every 15 minutes (`--poll`), so points keep accumulating
 even when nobody has the page open.
 
-Size: one point is ~160 bytes of JSON. At the default 15-minute poll that is
+Size: one point is ~160 bytes. At the default 15-minute poll that is
 ~96 points/day → ~15 KB/day → ~5.5 MB/year. Two bounds keep it from growing
 without limit:
 
@@ -334,16 +334,21 @@ Numbers: ~96 points/day × 160 B ≈ **5.5 MB/year**, so 5 years ≈ 28 MB, and
 The default window is `--ui-days 7`; the calendar still shows every day that
 exists in the file.
 
-One honest limit: the store is a single JSON rewritten on every merge, so at
-tens of megabytes each poll rewrites the whole file (~96 × 28 MB/day at 5 years).
-That is fine on an SSD but wasteful on an SD card. If you ever want a decade of
-history, moving to SQLite is the right next step — not implemented.
+The store is **SQLite** (`PRAGMA journal_mode=WAL`), so inserts are indexed
+point-lookups and the windowed queries the API needs (`ts >= ?`, group by day)
+never scan a file. A decade of history stays cheap; no rewriting the whole
+dataset on each poll.
+
+Migrating from the old JSON store is automatic: on first start, if
+`history.json` sits next to the DB, its points are imported and the file is
+renamed to `history.json.imported`.
 
 What it does **not** do: recover points from before you started collecting. If
 the stack is stopped for more than ~7 days, that gap is gone.
 
-Files: `keys/beacon_history.json` for a native run, the `history` volume
-(`/data/history.json`) under compose.
+Files: `keys/beacon_history.db` for a native run, the `history` volume
+(`/data/history.db`) under compose. The legacy `history.json` is imported once
+and renamed.
 
 Alternatives:
 

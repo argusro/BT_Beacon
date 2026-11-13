@@ -23,6 +23,7 @@ import hmac
 import json
 import pathlib
 import socket
+import sqlite3
 import struct
 import sys
 import threading
@@ -87,47 +88,117 @@ ICON = None
 
 
 class History:
-    """Merge decrypted points into a JSON file, deduplicated by payload."""
+    """SQLite store of decrypted points (WAL, deduplicated by payload hash)."""
 
-    def __init__(self, path: pathlib.Path, keep_days: int = 0, max_points: int = 0):
+    SCHEMA = """
+    CREATE TABLE IF NOT EXISTS points (
+        id         TEXT PRIMARY KEY,
+        ts         INTEGER NOT NULL,
+        when_iso   TEXT    NOT NULL,
+        lat        REAL    NOT NULL,
+        lon        REAL    NOT NULL,
+        accuracy   INTEGER,
+        status     INTEGER,
+        confidence INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS points_ts ON points(ts);
+    """
+
+    def __init__(self, path: pathlib.Path, keep_days: int = 0, max_points: int = 0,
+                 legacy_json: pathlib.Path | None = None):
         self.path = path
         self.keep_days = keep_days
         self.max_points = max_points
         self.lock = threading.Lock()
-        self.points: list[dict] = []
-        if path.exists():
-            try:
-                self.points = json.loads(path.read_text()).get("points", [])
-            except (ValueError, OSError):
-                self.points = []
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.db = sqlite3.connect(str(path), check_same_thread=False)
+        self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute("PRAGMA synchronous=NORMAL")
+        self.db.executescript(self.SCHEMA)
+        self.db.commit()
+        if legacy_json and legacy_json.exists():
+            self._import_json(legacy_json)
+
+    def _import_json(self, path: pathlib.Path) -> None:
+        """One-time import of the old history.json, then rename it aside."""
+        try:
+            data = json.loads(path.read_text()).get("points", [])
+        except (ValueError, OSError) as exc:
+            print(f"could not import {path.name}: {exc}", flush=True)
+            return
+        if not data:
+            path.unlink(missing_ok=True)
+            return
+        before = self.count()
+        self.merge(data)
+        path.rename(path.with_suffix(".json.imported"))
+        print(f"imported {self.count() - before} points from {path.name}", flush=True)
+
+    @staticmethod
+    def _row(row) -> dict:
+        return {"id": row[0], "when": row[1], "lat": row[2], "lon": row[3],
+                "accuracy": row[4], "status": row[5], "confidence": row[6]}
+
+    def count(self) -> int:
+        return self.db.execute("SELECT count(*) FROM points").fetchone()[0]
+
+    def first_when(self):
+        row = self.db.execute("SELECT when_iso FROM points ORDER BY ts LIMIT 1").fetchone()
+        return row[0] if row else None
+
+    def merge(self, new_points: list[dict]) -> None:
+        with self.lock:
+            changed = False
+            for p in new_points:
+                cur = self.db.execute(
+                    "INSERT OR IGNORE INTO points"
+                    "(id, ts, when_iso, lat, lon, accuracy, status, confidence)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    (p["id"], int(_epoch(p["when"])), p["when"], p["lat"], p["lon"],
+                     p.get("accuracy"), p.get("status"), p.get("confidence")),
+                )
+                changed = changed or cur.rowcount > 0
+            if changed:
+                self._trim()
+                self.db.commit()
 
     def _trim(self) -> None:
         if self.keep_days:
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=self.keep_days)).isoformat()
-            self.points = [p for p in self.points if p["when"] >= cutoff]
-        if self.max_points and len(self.points) > self.max_points:
-            # points are sorted oldest-first: keep the newest tail
-            self.points = self.points[-self.max_points:]
+            cutoff = int((datetime.now(timezone.utc)
+                          - timedelta(days=self.keep_days)).timestamp())
+            self.db.execute("DELETE FROM points WHERE ts < ?", (cutoff,))
+        if self.max_points:
+            self.db.execute(
+                "DELETE FROM points WHERE id NOT IN "
+                "(SELECT id FROM points ORDER BY ts DESC LIMIT ?)",
+                (self.max_points,),
+            )
 
-    def merge(self, new_points: list[dict]) -> list[dict]:
-        with self.lock:
-            known = {p["id"] for p in self.points}
-            changed = False
-            for point in new_points:
-                if point["id"] not in known:
-                    self.points.append(point)
-                    known.add(point["id"])
-                    changed = True
-            if changed:
-                self.points.sort(key=lambda p: p["when"])
-                self._trim()
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                self.path.write_text(json.dumps({"points": self.points}, indent=1))
-            return list(self.points)
+    def query(self, from_ts=None, to_ts=None, days: int = 0) -> list[dict]:
+        where, params = [], []
+        if from_ts is not None:
+            where.append("ts >= ?")
+            params.append(int(from_ts))
+        if to_ts is not None:
+            where.append("ts < ?")
+            params.append(int(to_ts))
+        if days:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).timestamp()
+            where.append("ts >= ?")
+            params.append(int(cutoff))
 
-    def snapshot(self) -> list[dict]:
-        with self.lock:
-            return list(self.points)
+        sql = "SELECT id, when_iso, lat, lon, accuracy, status, confidence FROM points"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY ts"
+        return [self._row(r) for r in self.db.execute(sql, params).fetchall()]
+
+    def summary(self, tz_offset_min: int) -> dict:
+        rows = self.db.execute(
+            "SELECT date(ts - ?, 'unixepoch') AS d, count(*) FROM points GROUP BY d",
+            (tz_offset_min * 60,),
+        ).fetchall()
+        return {r[0]: r[1] for r in rows}
 
 
 def fetch_reports(args, hashes: list[str]) -> list[dict]:
@@ -194,33 +265,26 @@ def maybe_refresh(args, keys: dict, history: History, force: bool) -> str | None
     return None
 
 
-def select_points(points: list[dict], args, query: dict) -> list[dict]:
-    frm = (query.get("from") or [None])[0]
-    to = (query.get("to") or [None])[0]
-    if frm or to:
-        lo = _epoch(frm) if frm else 0.0
-        hi = _epoch(to) if to else float("inf")
-        return [p for p in points if lo <= _epoch(p["when"]) < hi]
-
-    days = int((query.get("days") or [args.ui_days])[0] or 0)
-    if days > 0:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).timestamp()
-        return [p for p in points if _epoch(p["when"]) >= cutoff]
-    return points
-
-
 def build_payload(args, keys: dict, history: History, query: dict) -> dict:
     error = maybe_refresh(args, keys, history, bool(query.get("force")))
-    all_points = history.snapshot()
-    points = select_points(all_points, args, query)
+
+    frm = (query.get("from") or [None])[0]
+    to = (query.get("to") or [None])[0]
+    from_ts = _epoch(frm) if frm else None
+    to_ts = _epoch(to) if to else None
+    days = 0 if (from_ts is not None or to_ts is not None) else int(
+        (query.get("days") or [args.ui_days])[0] or 0)
+
+    points = history.query(from_ts, to_ts, days)
     return {
         "count": len(points),
-        "total": len(all_points),
+        "total": history.count(),
         "reports": points,
-        "stored_since": all_points[0]["when"] if all_points else None,
+        "stored_since": history.first_when(),
         "keep_days": args.keep_days,
         "max_points": args.max_points,
         "keys": len(keys),
+        "api": 2,
         "error": error,
         "last_ok": STATE["last_ok"],
     }
@@ -233,21 +297,15 @@ def summary_payload(args, keys: dict, history: History, query: dict) -> dict:
     except ValueError:
         tz_offset = 0
 
-    points = history.snapshot()
-    days: dict[str, int] = {}
-    for p in points:
-        local = datetime.fromisoformat(p["when"]) - timedelta(minutes=tz_offset)
-        key = local.date().isoformat()
-        days[key] = days.get(key, 0) + 1
-
     return {
-        "count": len(points),
-        "days": days,
-        "stored_since": points[0]["when"] if points else None,
+        "count": history.count(),
+        "days": history.summary(tz_offset),
+        "stored_since": history.first_when(),
         "keep_days": args.keep_days,
         "max_points": args.max_points,
         "ui_days": args.ui_days,
         "keys": len(keys),
+        "api": 2,
         "error": STATE["last_error"],
         "last_ok": STATE["last_ok"],
     }
@@ -365,9 +423,9 @@ def main() -> int:
     keys = load_keys(args.name, args.keys_file)
 
     store = pathlib.Path(args.store) if args.store else (
-        ROOT / "keys" / f"{args.name}_history.json"
+        ROOT / "keys" / f"{args.name}_history.db"
     )
-    history = History(store, args.keep_days, args.max_points)
+    history = History(store, args.keep_days, args.max_points, store.with_suffix(".json"))
     ICON = make_icon()
 
     Handler.keys = keys
@@ -380,7 +438,7 @@ def main() -> int:
                 time.sleep(args.poll * 60)
                 try:
                     collect(args, keys, history)
-                    print(f"polled: {len(history.snapshot())} points stored", flush=True)
+                    print(f"polled: {history.count()} points stored", flush=True)
                 except Exception as exc:  # noqa: BLE001
                     print(f"poll failed: {exc}", flush=True)
 
@@ -389,7 +447,7 @@ def main() -> int:
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"keys     : {len(keys)} slots (queried together)")
     print(f"source   : {args.proxy or args.endpoint}")
-    print(f"history  : {store} ({len(history.snapshot())} points, keep "
+    print(f"history  : {store} ({history.count()} points, keep "
           f"{args.keep_days or 'all'} days)")
     print(f"polling  : every {args.poll} min" if args.poll else "polling  : off")
     print(f"auth     : {'yes' if AUTH else 'no'}")
