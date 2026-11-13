@@ -115,6 +115,26 @@ python scripts/keygen.py --name tag2 --no-header    # -> keys/tag2_keys.json
 want one to flash). The watcher picks up every `keys/<name>_keys.json` and
 exposes each as its own tag — no restart of the beacon side needed.
 
+#### Automatic on flash
+
+`platformio.ini` runs `scripts/prebuild_keys.py` before every build, so you
+never call keygen by hand:
+
+```powershell
+pio run -t upload                        # tag "beacon"
+$env:BEACON_TAG="tag2"; pio run -t upload   # tag "tag2"
+```
+
+The hook:
+
+- creates `keys/<tag>_keys.json` **once** (using any Python on PATH that has
+  `cryptography`, since PlatformIO's own Python doesn't ship it)
+- re-renders `src/beacon_keys.h` only when the ring actually changed
+- is idempotent: re-flashing the same tag never rotates its identity
+
+`BEACON_PYTHON` overrides which interpreter is used for generation; setting
+`custom_tag` in `platformio.ini` does the same as the env var.
+
 ### Why NimBLE, not `BLEDevice`
 
 PlatformIO `espressif32` resolves to platform 6.9.0 with **Arduino core 3.0.0**,
@@ -382,6 +402,7 @@ Alternatives:
 | `src/beacon_keys.h` | 96 advertising keys, one per rotation slot (generated) |
 | `keys/beacon_keys.json` | **Secret** — private + advertising key per slot; gitignored |
 | `scripts/keygen.py` | Generates the key ring → `keys/` + header |
+| `scripts/prebuild_keys.py` | PlatformIO hook: ensure ring + render header |
 | `scripts/haystack_devices.py` | `devices.json` + hashed key for the frontend |
 | `scripts/decrypt_reports.py` | Decrypt a report JSON into coordinates |
 | `scripts/ble_scan.py` | Decode Apple advertisements over the air |
