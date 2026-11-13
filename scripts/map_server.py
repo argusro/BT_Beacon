@@ -35,7 +35,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from cryptography.hazmat.primitives.asymmetric import ec
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from decrypt_reports import decrypt_payload  # noqa: E402
+from decrypt_reports import decrypt_payload, load_keys  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 AUTH = None  # (user, password) when --auth is given
@@ -224,11 +224,6 @@ MANIFEST = {
 }
 
 
-def key_hash_b64(private_key) -> str:
-    adv = private_key.public_key().public_numbers().x.to_bytes(28, "big")
-    return base64.b64encode(hashlib.sha256(adv).digest()).decode()
-
-
 def make_icon(size: int = 180) -> bytes:
     """Blue square, white ring, red dot - a PNG built with nothing but stdlib."""
     centre = (size - 1) / 2
@@ -300,13 +295,13 @@ class History:
             return list(self.points)
 
 
-def fetch_reports(args, key_hash: str) -> list[dict]:
+def fetch_reports(args, hashes: list[str]) -> list[dict]:
     if args.proxy:
         url = args.proxy
-        body = {"search": [{"ids": [key_hash]}]}
+        body = {"search": [{"ids": hashes}]}
     else:
         url = args.endpoint.rstrip("/") + "/"
-        body = {"ids": [key_hash], "days": args.days}
+        body = {"ids": hashes, "days": args.days}
 
     request = urllib.request.Request(
         url,
@@ -317,27 +312,37 @@ def fetch_reports(args, key_hash: str) -> list[dict]:
         return json.load(response).get("results", [])
 
 
-def collect(args, private_key, history: History) -> None:
+def collect(args, keys: dict, history: History) -> None:
     try:
-        raw = fetch_reports(args, key_hash_b64(private_key))
+        raw = fetch_reports(args, list(keys))
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"fetch failed: {exc}") from exc
 
     fresh = []
     for report in raw:
-        try:
-            point = decrypt_payload(report["payload"], private_key)
-        except Exception:  # noqa: BLE001
+        payload = report["payload"]
+        matched = keys.get(report.get("id"))
+        candidates = [matched] if matched is not None else list(keys.values())
+
+        point = None
+        for candidate in candidates:
+            try:
+                point = decrypt_payload(payload, candidate)
+                break
+            except Exception:  # noqa: BLE001
+                continue
+        if point is None:
             continue
-        point["id"] = hashlib.sha1(report["payload"].encode()).hexdigest()
+
+        point["id"] = hashlib.sha1(payload.encode()).hexdigest()
         fresh.append(point)
 
     history.merge(fresh)
 
 
-def build_payload(args, private_key, history: History) -> dict:
+def build_payload(args, keys: dict, history: History) -> dict:
     try:
-        collect(args, private_key, history)
+        collect(args, keys, history)
     except RuntimeError as exc:
         if not history.snapshot():
             return {"error": str(exc), "keep_days": args.keep_days}
@@ -347,11 +352,12 @@ def build_payload(args, private_key, history: History) -> dict:
         "reports": points,
         "stored_since": points[0]["when"] if points else None,
         "keep_days": args.keep_days,
+        "keys": len(keys),
     }
 
 
 class Handler(BaseHTTPRequestHandler):
-    private_key = None
+    keys = None
     args = None
     history = None
 
@@ -387,7 +393,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if self.path.startswith("/api/reports"):
-            payload = build_payload(self.args, self.private_key, self.history)
+            payload = build_payload(self.args, self.keys, self.history)
             self._send(200, "application/json", json.dumps(payload).encode())
         elif self.path in ("/", "/index.html"):
             self._send(200, "text/html; charset=utf-8", PAGE.encode())
@@ -421,7 +427,8 @@ def main() -> int:
     parser.add_argument("--days", type=int, default=7,
                         help="how far back to ask Apple (max ~7)")
     parser.add_argument("--name", default="beacon")
-    parser.add_argument("--key-file", default=None)
+    parser.add_argument("--keys-file", default=None,
+                        help="key ring JSON (default keys/<name>_keys.json)")
     parser.add_argument("--store", default=None)
     parser.add_argument("--poll", type=int, default=15,
                         help="background poll interval in minutes, 0 disables")
@@ -437,13 +444,7 @@ def main() -> int:
             parser.error("--auth must be user:password")
         AUTH = (user, password)
 
-    key_file = pathlib.Path(args.key_file) if args.key_file else (
-        ROOT / "keys" / f"{args.name}.priv.hex"
-    )
-    private_key = ec.derive_private_key(
-        int.from_bytes(bytes.fromhex(key_file.read_text().strip()), "big"),
-        ec.SECP224R1(),
-    )
+    keys = load_keys(args.name, args.keys_file)
 
     store = pathlib.Path(args.store) if args.store else (
         ROOT / "keys" / f"{args.name}_history.json"
@@ -451,7 +452,7 @@ def main() -> int:
     history = History(store, args.keep_days)
     ICON = make_icon()
 
-    Handler.private_key = private_key
+    Handler.keys = keys
     Handler.args = args
     Handler.history = history
 
@@ -460,7 +461,7 @@ def main() -> int:
             while True:
                 time.sleep(args.poll * 60)
                 try:
-                    collect(args, private_key, history)
+                    collect(args, keys, history)
                     print(f"polled: {len(history.snapshot())} points stored", flush=True)
                 except Exception as exc:  # noqa: BLE001
                     print(f"poll failed: {exc}", flush=True)
@@ -468,7 +469,7 @@ def main() -> int:
         threading.Thread(target=poller, daemon=True).start()
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"key hash : {key_hash_b64(private_key)}")
+    print(f"keys     : {len(keys)} slots (queried together)")
     print(f"source   : {args.proxy or args.endpoint}")
     print(f"history  : {store} ({len(history.snapshot())} points, keep "
           f"{args.keep_days or 'all'} days)")

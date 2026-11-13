@@ -41,8 +41,8 @@ services:
     command:
       - --endpoint
       - http://endpoint:6176
-      - --key-file
-      - /keys/beacon.priv.hex
+      - --keys-file
+      - /keys/beacon_keys.json
       - --store
       - /data/history.json
       - --keep-days

@@ -23,7 +23,7 @@ on `D10` through ~220 Ω is optional and blinks at 1 Hz.
 ## Quick start
 
 ```powershell
-python scripts/keygen.py                 # new P-224 key -> src/beacon_key.h + keys/
+python scripts/keygen.py                 # 96 rotating keys -> src/beacon_keys.h + keys/
 pio run -t upload                        # build + flash
 pio device monitor                       # serial log
 ```
@@ -76,6 +76,30 @@ addr[1..5] = key[1..5]
 
 P-224 is the right curve because its X coordinate is exactly 28 bytes — the
 largest EC key that fits across one advertisement plus the address.
+
+### Key rotation
+
+Real AirTags rotate their advertising key every ~15 minutes. This firmware does
+the same using a pre-generated ring of independent key pairs:
+
+| | |
+| --- | --- |
+| Ring size | `BEACON_KEY_COUNT` (96 by default = 24 h at 15 min) |
+| Period | `BEACON_ROTATE_SECONDS` (900 s; override with `-D` for testing) |
+| Start slot | random at boot, so a reboot doesn't always reveal slot 0 |
+| Address | re-derived per key, so it rotates with it |
+
+Design detail: the device and the fetcher never need a synchronised clock,
+because the fetcher asks Apple for **every** hash in the ring. The device just walks the ring; whichever slot was active when an iPhone
+saw it will have a report under that slot's hash.
+
+Rotation stops advertising, reprograms the random address, sets the new payload
+and restarts — `ble_gap_adv_stop()` does not emit `BLE_GAP_EVENT_ADV_COMPLETE`
+on this NimBLE port, so the restart is driven from the main loop rather than an
+event callback.
+
+`scripts/keygen.py` reuses the existing `keys/beacon.priv.hex` as slot 0, so
+reports filed before the upgrade stay in the searched hash set.
 
 ### Why NimBLE, not `BLEDevice`
 
@@ -217,7 +241,8 @@ python scripts\decrypt_reports.py reports.json
 
 The hash in `ids` is `base64(sha256(advertising key))`; `scripts/haystack_devices.py`
 prints it for the current key, along with a `keys/beacon_devices.json` for
-macless-haystack's web/Android frontend.
+macless-haystack's web/Android frontend. `map_server.py` builds that list for all
+96 ring slots and queries them in a single request, so rotation is transparent.
 
 ### See it on a map
 
@@ -290,8 +315,9 @@ Alternatives:
 | File | Purpose |
 | --- | --- |
 | `src/main.cpp` | NimBLE beacon: frame, random address, non-connectable advertising |
-| `src/beacon_key.h` | 28-byte advertising key (generated) |
-| `scripts/keygen.py` | P-224 key pair → `keys/` + header |
+| `src/beacon_keys.h` | 96 advertising keys, one per rotation slot (generated) |
+| `keys/beacon_keys.json` | **Secret** — private + advertising key per slot; gitignored |
+| `scripts/keygen.py` | Generates the key ring → `keys/` + header |
 | `scripts/haystack_devices.py` | `devices.json` + hashed key for the frontend |
 | `scripts/decrypt_reports.py` | Decrypt a report JSON into coordinates |
 | `scripts/ble_scan.py` | Decode Apple advertisements over the air |
@@ -303,12 +329,13 @@ Alternatives:
 
 ## Caveats
 
-- **Static key.** A real AirTag rotates keys every ~15 minutes; this one
-  advertises a single key forever, so it is trivially trackable by anyone
-  sniffing. Key rotation is the main remaining gap.
+- **Key rotation, not perfect privacy.** The ring rotates every 15 minutes, so a
+  passive sniffer cannot follow one stable identifier. But the ring is finite
+  (96 slots ≈ 24 h), so a patient observer who records for a day can notice the
+  repeat. Increase `--count` for a longer cycle.
 - **Anti-stalking.** iPhones will eventually warn their owner about an unknown
-  tracker travelling with them. That is Apple's protection working — a static
-  beacon looks like a stalker tag, and DIY beacons have no speaker to chirp.
+  tracker travelling with them. That is Apple's protection working — DIY
+  beacons have no speaker to chirp.
 - **Your own property only.** Tracking a person without consent is illegal.
 - **Unofficial.** Apple's backend is undocumented and changed twice in Oct 2026
   alone. This setup can break at any time.

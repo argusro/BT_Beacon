@@ -7,6 +7,7 @@
 keys/*.priv.hex
 keys/*.priv
 keys/*_devices.json
+keys/*_keys.json
 
 # fetched location reports (contains your location history)
 reports.json

@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-Decrypt Apple Find My location reports for our beacon key.
+Decrypt Apple Find My location reports for the beacon's key ring.
 
 Usage:
     python scripts/decrypt_reports.py <reports.json> [name]
 
 <reports.json> is the endpoint's response, e.g.
-    {"results": [{"payload": "<base64>", ...}], "statusCode": "200"}
+    {"results": [{"payload": "<base64>", "id": "<hash>"}], "statusCode": "200"}
+
+Each report is matched to its key slot by the `id` (hash) field, so a rotating
+key ring works transparently.
 
 Report payload layout (two variants in the wild):
 
@@ -16,9 +19,6 @@ Report payload layout (two variants in the wild):
 Key derivation is a single-pass X9.63-style KDF over the ECDH secret and the
 ephemeral point, then AES-128-GCM. Reference: malmeloo/FindMy.py
 findmy/reports/reports.py (the newer MacOS 14+ report format).
-
-Decrypted plaintext (10 bytes):
-    lat (int32, /1e7), lon (int32, /1e7), accuracy (u8), status (u8)
 """
 
 import base64
@@ -34,6 +34,32 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPLE_EPOCH = datetime(2001, 1, 1, tzinfo=timezone.utc)
+CURVE = ec.SECP224R1()
+
+
+def hash_of_adv(adv: bytes) -> str:
+    return base64.b64encode(hashlib.sha256(adv).digest()).decode()
+
+
+def load_keys(name: str = "beacon", keys_file: str | None = None) -> dict:
+    """Return {hash_b64: private_key} for every slot in the rotation ring."""
+    json_path = pathlib.Path(keys_file) if keys_file else ROOT / "keys" / f"{name}_keys.json"
+
+    if json_path.exists() and json_path.suffix == ".json":
+        data = json.loads(json_path.read_text())
+        keys = {}
+        for entry in data["keys"]:
+            key = ec.derive_private_key(int(entry["priv"], 16), CURVE)
+            keys[entry.get("hash_b64") or hash_of_adv(bytes.fromhex(entry["adv"]))] = key
+        return keys
+
+    # legacy single-key layout
+    priv_path = pathlib.Path(keys_file) if keys_file else ROOT / "keys" / f"{name}.priv.hex"
+    key = ec.derive_private_key(
+        int.from_bytes(bytes.fromhex(priv_path.read_text().strip()), "big"), CURVE
+    )
+    adv = key.public_key().public_numbers().x.to_bytes(28, "big")
+    return {hash_of_adv(adv): key}
 
 
 def decrypt_payload(payload_b64: str, private_key) -> dict:
@@ -43,7 +69,7 @@ def decrypt_payload(payload_b64: str, private_key) -> dict:
         encrypted = encrypted[1:]
 
     point = encrypted[1:58]
-    eph = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP224R1(), point)
+    eph = ec.EllipticCurvePublicKey.from_encoded_point(CURVE, point)
     shared = private_key.exchange(ec.ECDH(), eph)
     symmetric_key = hashlib.sha256(shared + b"\x00\x00\x00\x01" + point).digest()
 
@@ -67,6 +93,18 @@ def decrypt_payload(payload_b64: str, private_key) -> dict:
     }
 
 
+def decrypt_report(report: dict, keys: dict) -> dict | None:
+    """Decrypt one report, preferring the key slot named by its hash."""
+    matched = keys.get(report.get("id"))
+    candidates = [matched] if matched is not None else list(keys.values())
+    for candidate in candidates:
+        try:
+            return decrypt_payload(report["payload"], candidate)
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__)
@@ -74,23 +112,17 @@ def main() -> int:
 
     reports_path = pathlib.Path(sys.argv[1])
     name = sys.argv[2] if len(sys.argv) > 2 else "beacon"
-    private_key = ec.derive_private_key(
-        int.from_bytes(
-            bytes.fromhex((ROOT / "keys" / f"{name}.priv.hex").read_text().strip()),
-            "big",
-        ),
-        ec.SECP224R1(),
-    )
+    keys = load_keys(name)
 
     data = json.loads(reports_path.read_text())
     results = data.get("results", [])
-    print(f"{len(results)} report(s), statusCode={data.get('statusCode')}\n")
+    print(f"{len(results)} report(s), statusCode={data.get('statusCode')}, "
+          f"{len(keys)} key slot(s)\n")
 
     for i, report in enumerate(results, start=1):
-        try:
-            info = decrypt_payload(report["payload"], private_key)
-        except Exception as exc:  # noqa: BLE001
-            print(f"{i}: could not decrypt ({exc})")
+        info = decrypt_report(report, keys)
+        if info is None:
+            print(f"{i}: could not decrypt")
             continue
         print(f"{i}: {info['when']}  lat={info['lat']:.6f} lon={info['lon']:.6f} "
               f"acc={info['accuracy']} status={info['status']} conf={info['confidence']}")
