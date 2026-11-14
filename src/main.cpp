@@ -61,8 +61,10 @@ static uint8_t addr_le[6];       // NimBLE ble_addr_t order, LSB first
 static struct ble_gap_adv_params adv_params;
 
 static volatile bool advertising = false;
+static volatile bool host_synced = false;
 static uint32_t rotate_requested_ms = 0;  // 0 = no rotation in flight
 static uint32_t last_rotate_ms = 0;
+static uint32_t last_watchdog_ms = 0;
 static uint16_t key_index = 0;
 
 static void print_hex(const char *label, const uint8_t *data, size_t len) {
@@ -149,6 +151,8 @@ static void on_sync() {
   if (start_advertising()) {
     Serial.println("advertising as a Find My accessory");
   }
+  host_synced = true;
+  last_watchdog_ms = millis();
 }
 
 static void on_reset(int reason) {
@@ -228,6 +232,18 @@ void loop() {
 
   if (!rotate_requested_ms && (millis() - last_rotate_ms) >= ROTATE_MS) {
     rotate_to(key_index + 1);
+  }
+
+  // Supervisor: if advertising is not running and no rotation is in flight,
+  // restart it. Covers a failed rotation restart or a controller hiccup that
+  // would otherwise leave the tag silent while the firmware looks healthy.
+  if (host_synced && !advertising && !rotate_requested_ms &&
+      (millis() - last_watchdog_ms) >= 5000) {
+    last_watchdog_ms = millis();
+    Serial.println("!! advertising lost - restarting");
+    if (!start_advertising()) {
+      Serial.println("!! watchdog restart failed");
+    }
   }
 
   if (millis() - last_report >= 30000) {
