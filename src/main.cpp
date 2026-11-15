@@ -332,9 +332,12 @@ void loop() {
 
   if (millis() - last_report >= 30000) {
     last_report = millis();
-    Serial.printf("[%6lus] %s  key %u/%u  heap=%lu\n", (unsigned long)(millis() / 1000),
-                  advertising ? "beaconing" : "NOT advertising",
-                  (unsigned)key_index + 1, (unsigned)BEACON_KEY_COUNT,
+    const char *state = advertising ? "beaconing"
+                        : (rotate_requested_ms || rearm_requested_ms) ? "restarting"
+                                                                      : "NOT advertising";
+    Serial.printf("[%6lus] %-15s key %u/%u  boot #%lu  heap=%lu\n",
+                  (unsigned long)(millis() / 1000), state, (unsigned)key_index + 1,
+                  (unsigned)BEACON_KEY_COUNT, (unsigned long)boot_count,
                   (unsigned long)ESP.getFreeHeap());
   }
 

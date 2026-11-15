@@ -52,12 +52,17 @@ Expected serial output:
 =========================================
  BT_Beacon - Apple Find My emulation
 =========================================
+boot #7   reset reason: power-on (1)
+watchdog restarts so far: 0
 chip        : ESP32-C3 rev 4
-adv key     : 621112aa...22af
+keys        : 96, rotating every 900s
+start slot  : 23
 BLE address : de 0a 24 e6 00 aa
 adv frame   : 1e ff 4c 00 12 19 00 d8 2a 0c 3b 0d 3e 7e 17 b1 f9 8d 34 44 85 f5 d8 d0 cc 10 3b 52 35 00 00
 -----------------------------------------
 advertising as a Find My accessory
+[    30s] beaconing        key 23/96  boot #7  heap=249416
+[   300s] re-arming advertising
 ```
 
 Verify on the air (uses `.venv` with `bleak`, see Tooling):
