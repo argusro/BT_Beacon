@@ -29,7 +29,9 @@
  */
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <esp_random.h>
+#include <esp_system.h>
 
 #include <host/ble_hs.h>
 #include <host/util/util.h>
@@ -47,6 +49,17 @@ static constexpr uint32_t ROTATE_MS = (uint32_t)BEACON_ROTATE_SECONDS * 1000UL;
 // Settling time between ble_gap_adv_stop() and reconfiguring the address.
 static constexpr uint32_t RESTART_DELAY_MS = 250;
 
+// Unconditional stop/start of advertising, independent of the rotation timer.
+// The controller can stop transmitting while the host still believes the
+// advertiser is running (seen in the field as a tag that is silent for hours
+// and comes back only after a reset). Re-arming costs a ~250 ms gap every few
+// minutes, which no finder notices.
+static constexpr uint32_t REARM_MS = 5UL * 60UL * 1000UL;
+
+// After this many failed restarts in a row, reboot the MCU. The key ring lives
+// in flash and the start slot is random, so a reboot is a safe last resort.
+static constexpr uint32_t MAX_ADV_FAILURES = 5;
+
 // Slow 1 Hz blink on an external LED wired to D10 (the board has no built-in
 // user LED). Set to 0 to save power.
 #ifndef ENABLE_STATUS_LED
@@ -63,9 +76,34 @@ static struct ble_gap_adv_params adv_params;
 static volatile bool advertising = false;
 static volatile bool host_synced = false;
 static uint32_t rotate_requested_ms = 0;  // 0 = no rotation in flight
+static uint32_t rearm_requested_ms = 0;   // 0 = no re-arm in flight
 static uint32_t last_rotate_ms = 0;
+static uint32_t last_arm_ms = 0;          // last successful adv start
 static uint32_t last_watchdog_ms = 0;
+static uint32_t adv_failures = 0;         // consecutive failed restarts
 static uint16_t key_index = 0;
+
+static Preferences prefs;
+static uint32_t boot_count = 0;
+static uint32_t wd_restarts = 0;
+
+// Survives power cycles: tells us whether the tag rebooted / browned out while
+// it was away, which is otherwise invisible.
+static const char *reset_reason_str(esp_reset_reason_t reason) {
+  switch (reason) {
+    case ESP_RST_POWERON: return "power-on";
+    case ESP_RST_EXT: return "external";
+    case ESP_RST_SW: return "software";
+    case ESP_RST_PANIC: return "PANIC";
+    case ESP_RST_INT_WDT: return "int-wdt";
+    case ESP_RST_TASK_WDT: return "task-wdt";
+    case ESP_RST_WDT: return "wdt";
+    case ESP_RST_BROWNOUT: return "BROWNOUT";
+    case ESP_RST_DEEPSLEEP: return "deepsleep";
+    case ESP_RST_SDIO: return "sdio";
+    default: return "other";
+  }
+}
 
 static void print_hex(const char *label, const uint8_t *data, size_t len) {
   Serial.printf("%s", label);
@@ -150,6 +188,7 @@ static void rotate_to(uint16_t index) {
 static void on_sync() {
   if (start_advertising()) {
     Serial.println("advertising as a Find My accessory");
+    last_arm_ms = millis();
   }
   host_synced = true;
   last_watchdog_ms = millis();
@@ -186,10 +225,20 @@ void setup() {
   key_index = esp_random() % BEACON_KEY_COUNT;
   build_frame(BEACON_KEYS[key_index]);
 
+  // Boot diagnostics in NVS
+  prefs.begin("beacon", false);
+  boot_count = prefs.getUInt("boots", 0) + 1;
+  prefs.putUInt("boots", boot_count);
+  wd_restarts = prefs.getUInt("wd", 0);
+  prefs.end();
+
   Serial.println();
   Serial.println("=========================================");
   Serial.println(" BT_Beacon - Apple Find My emulation");
   Serial.println("=========================================");
+  Serial.printf("boot #%lu   reset reason: %s (%d)\n", (unsigned long)boot_count,
+                reset_reason_str(esp_reset_reason()), (int)esp_reset_reason());
+  Serial.printf("watchdog restarts so far: %lu\n", (unsigned long)wd_restarts);
   Serial.printf("chip        : %s rev %d\n", ESP.getChipModel(), ESP.getChipRevision());
   Serial.printf("keys        : %u, rotating every %lus\n", (unsigned)BEACON_KEY_COUNT,
                 (unsigned long)(ROTATE_MS / 1000));
@@ -218,31 +267,66 @@ void loop() {
   }
 #endif
 
-  // Finish a rotation: give the controller a moment after the stop, then
-  // reprogram the address/payload and restart advertising.
-  if (rotate_requested_ms && (millis() - rotate_requested_ms) >= RESTART_DELAY_MS) {
+  // Complete whichever restart is pending: a scheduled key rotation or an
+  // insurance re-arm. Both have already stopped the advertiser.
+  uint32_t *pending = rotate_requested_ms
+                          ? &rotate_requested_ms
+                          : (rearm_requested_ms ? &rearm_requested_ms : nullptr);
+  if (pending && (millis() - *pending) >= RESTART_DELAY_MS) {
     if (start_advertising()) {
-      rotate_requested_ms = 0;
-      last_rotate_ms = millis();
+      if (pending == &rotate_requested_ms) {
+        last_rotate_ms = millis();
+      }
+      *pending = 0;
+      last_arm_ms = millis();
+      adv_failures = 0;
     } else {
-      rotate_requested_ms = millis() | 1;  // retry
-      Serial.println("!! restart failed, retrying");
+      *pending = millis() | 1;  // retry
+      Serial.printf("!! restart failed (%lu in a row)\n", (unsigned long)++adv_failures);
+      if (adv_failures >= MAX_ADV_FAILURES) {
+        Serial.println("!! advertising unrecoverable - rebooting");
+        Serial.flush();
+        ESP.restart();
+      }
     }
   }
 
-  if (!rotate_requested_ms && (millis() - last_rotate_ms) >= ROTATE_MS) {
+  if (!rotate_requested_ms && !rearm_requested_ms &&
+      (millis() - last_rotate_ms) >= ROTATE_MS) {
     rotate_to(key_index + 1);
+  }
+
+  // Insurance against a controller that has silently stopped transmitting
+  // while the host still thinks the advertiser is running: stop and start it
+  // again on a fixed schedule, no matter what the flags say.
+  if (!rotate_requested_ms && !rearm_requested_ms && advertising &&
+      (millis() - last_arm_ms) >= REARM_MS) {
+    Serial.printf("[%6lus] re-arming advertising\n", (unsigned long)(millis() / 1000));
+    ble_gap_adv_stop();
+    advertising = false;
+    rearm_requested_ms = millis() | 1;
   }
 
   // Supervisor: if advertising is not running and no rotation is in flight,
   // restart it. Covers a failed rotation restart or a controller hiccup that
   // would otherwise leave the tag silent while the firmware looks healthy.
-  if (host_synced && !advertising && !rotate_requested_ms &&
+  if (host_synced && !advertising && !rotate_requested_ms && !rearm_requested_ms &&
       (millis() - last_watchdog_ms) >= 5000) {
     last_watchdog_ms = millis();
     Serial.println("!! advertising lost - restarting");
-    if (!start_advertising()) {
-      Serial.println("!! watchdog restart failed");
+    prefs.begin("beacon", false);
+    prefs.putUInt("wd", prefs.getUInt("wd", 0) + 1);
+    prefs.end();
+    if (start_advertising()) {
+      last_arm_ms = millis();
+      adv_failures = 0;
+    } else {
+      Serial.printf("!! watchdog restart failed (%lu in a row)\n", (unsigned long)++adv_failures);
+      if (adv_failures >= MAX_ADV_FAILURES) {
+        Serial.println("!! advertising unrecoverable - rebooting");
+        Serial.flush();
+        ESP.restart();
+      }
     }
   }
 

@@ -20,6 +20,24 @@ coordinates.
 The board has **no built-in user LED** (only a charge indicator). An external LED
 on `D10` through ~220 Ω is optional and blinks at 1 Hz.
 
+### Power
+
+The `5V` pin **is VBUS** — Seeed's pin map lists it as `5V | VBUS`, and there is
+no diode between it and the USB connector. That has two consequences:
+
+- Feeding it from a converter while USB is plugged in puts the converter in
+  parallel with the host's 5 V rail. Put a Schottky (1N5819 / SS34) between the
+  converter output and the `5V` pin, **anode on the converter side**, otherwise
+  a converter trimmed above 5 V pushes current back into the PC.
+- While USB is plugged in you cannot tell which supply is running the board.
+  Use a data-only cable (TX/RX/GND, no VBUS) if you want serial while testing a
+  battery, and unplug it entirely before drawing conclusions.
+
+Tested arrangement: a 3S LiPo (11.1–12.6 V) through an MP1584 buck set to 5.0 V,
+into the `5V` pin. That is also the car install: 12 V → buck → diode → `5V`.
+A 1S LiPo on the `BAT` pads is the alternative (onboard charger, leave the `5V`
+pin unconnected). At roughly 10–15 mA from the pack, a 1000 mAh 3S lasts days.
+
 ## Quick start
 
 ```powershell
@@ -100,6 +118,29 @@ event callback.
 
 `scripts/keygen.py` reuses the existing `keys/beacon.priv.hex` as slot 0, so
 reports filed before the upgrade stay in the searched hash set.
+
+### Radio supervision
+
+Two timers and one escalation keep the tag on air:
+
+| Guard | Period | What it does |
+| --- | --- | --- |
+| Key rotation | 900 s | stop → 250 ms → start with the new address and payload |
+| Re-arm | 300 s | stop → 250 ms → start again on the *same* key |
+| Escalation | 5 failures | reboot the MCU |
+
+The periodic re-arm exists because the controller can stop transmitting while
+the host still believes the advertiser is running. That happened in the field: a
+tag with a healthy serial log — clean rotation, stable heap, no errors — was
+invisible on air for hours, and only a reset brought it back. Since the host
+cannot observe its own transmissions, the only defence is to re-arm blindly.
+
+If a restart fails five times in a row (~25 s), the firmware reboots. The key
+ring lives in flash and the start slot is random, so a reboot is harmless.
+
+Boot diagnostics live in NVS and print at every start: `boot #`, `reset reason`
+and `watchdog restarts`. A tag that browned out or rebooted while out of reach
+therefore reports it the next time it is plugged in.
 
 ### Multiple tags
 
@@ -442,8 +483,9 @@ are an authorisation layer, not separate Apple logins.
 - **Your own property only.** Tracking a person without consent is illegal.
 - **Unofficial.** Apple's backend is undocumented and changed twice in Oct 2026
   alone. This setup can break at any time.
-- **Power.** Continuous 1–2 s advertising flattens a small LiPo in a day or two.
-  Light-sleep between bursts is the next optimisation.
+- **Power.** One BLE advertisement every 1–2 s draws ~10–15 mA from a 3S pack,
+  so a 1000 mAh battery lasts days, not hours. Light-sleep between bursts is the
+  next optimisation.
 - **Apple session expiry.** The stored session lasts weeks to months, then needs
   a fresh login (`bash deploy.sh login` on the VPS). The dashboard shows a
   banner when fetching starts failing; history already collected is unaffected.
@@ -454,9 +496,13 @@ are an authorisation layer, not separate Apple logins.
 
 ## Tooling notes
 
-- `.venv/` holds `bleak` for `scripts/ble_scan.py`. Recreate with
-  `python -m venv .venv; .\.venv\Scripts\pip install bleak`. The PowerShell WinRT
-  watcher starts but delivers no events on this machine.
+- `.venv/` holds `bleak` for `scripts/ble_scan.py` and `pyserial` for
+  `scripts/serial_log.py`. Recreate with
+  `python -m venv .venv; .\.venv\Scripts\pip install bleak pyserial`. The
+  PowerShell WinRT watcher starts but delivers no events on this machine.
+- `scripts/serial_log.py` timestamps every serial line and writes a marker after
+  90 s of silence, so a tag that dies overnight leaves evidence: heartbeats
+  stopping means a hang, a boot banner means a reset.
 - Two PlatformIO cores are installed: `pio` on `PATH` is a stale 6.1.19 pip
   install that crashes on Unicode output; use
   `%USERPROFILE%\.platformio\penv\Scripts\pio.exe` (6.2.0).
