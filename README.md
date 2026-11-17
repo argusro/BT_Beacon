@@ -326,13 +326,19 @@ python scripts\decrypt_reports.py reports.json
 The hash in `ids` is `base64(sha256(advertising key))`; `scripts/haystack_devices.py`
 prints it for the current key, along with a `keys/beacon_devices.json` for
 macless-haystack's web/Android frontend. `map_server.py` builds that list for all
-96 ring slots and queries them in a single request, so rotation is transparent.
+96 ring slots and queries them **one id per request** — Apple currently answers
+only the tail of a multi-id call — so rotation stays transparent.
 
 ### See it on a map
 
 `scripts/map_server.py` serves a Leaflet map, a JSON API and an installable web
 app on port 8099. It fetches, decrypts and serves only coordinates — the private
 key never leaves that process.
+
+The map has a **timeline scrubber** along the bottom (full width on phones, to the
+right of the history panel on desktop). Dragging it moves a red ring to the last
+report at or before that moment and highlights the matching history row, so a day
+can be replayed either by hand or with the play button.
 
 ```powershell
 # PC only

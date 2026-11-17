@@ -81,15 +81,24 @@
          margin-right: 6px; vertical-align: middle; }
   .empty { padding: 10px; color: #888; font-size: 12px; }
 
-  /* ---- timeline (desktop only) ---- */
+  /* ---- timeline (desktop right of the history, full width on phones) ---- */
   #timeline { display: none; }
   @media (min-width: 760px) {
     #timeline {
       display: block; bottom: 10px; left: 400px; right: 10px; max-width: 900px;
       padding: 6px 12px 8px;
     }
-    #timeline[hidden] { display: none !important; }
+    /* keep the OSM attribution visible above the scrubber */
+    .tl-on .leaflet-bottom.leaflet-right { bottom: 86px; }
   }
+  @media (max-width: 759px) {
+    #timeline {
+      display: block; left: 8px; right: 8px; bottom: 20px; padding: 4px 10px 6px;
+    }
+    #hist { bottom: 100px; left: 8px; width: calc(100vw - 16px); max-height: 36vh; }
+    #hint { bottom: 104px; }
+  }
+  #timeline[hidden] { display: none !important; }
   #tlhead { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
   #tlwhen { font-weight: 600; white-space: nowrap; }
   #tlwhere { color: #555; font-size: 11px; overflow: hidden;
@@ -497,6 +506,19 @@ function tlSetActive(i, pan) {
     (nameOf(x.tag_id) || 'tag') + ' \u00b7 ' + x.lat.toFixed(5) + ', ' +
     x.lon.toFixed(5) + ' \u00b7 \u00b1' + x.accuracy + ' m';
 
+  // Phones have no room for the full string: keep time, tag and accuracy, and
+  // add the date only when the window spans more than a day.
+  const narrow = window.matchMedia('(max-width: 759px)').matches;
+  if (narrow) {
+    const d = new Date(x.when);
+    const multiDay = (tl.t1 - tl.t0) > 20 * 3600 * 1000;
+    document.getElementById('tlwhen').textContent =
+      (multiDay ? d.toLocaleDateString([], {day: '2-digit', month: '2-digit'}) + ' ' : '') +
+      d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+    document.getElementById('tlwhere').textContent =
+      (nameOf(x.tag_id) || 'tag') + ' \u00b7 \u00b1' + x.accuracy + ' m';
+  }
+
   document.querySelectorAll('#list .row.sel').forEach(r => r.classList.remove('sel'));
   const row = document.querySelector('#list .row[data-i="' + i + '"]');
   if (row) row.classList.add('sel');
@@ -513,6 +535,7 @@ function tlSetActive(i, pan) {
 function tlBuild() {
   const panel = document.getElementById('timeline');
   const rs = state.reports;
+  document.body.classList.toggle('tl-on', rs.length > 0);
   if (!rs.length) {
     panel.hidden = true;
     if (tl.cursor) { tl.cursor.remove(); tl.cursor = null; }
