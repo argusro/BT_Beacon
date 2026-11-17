@@ -147,7 +147,6 @@
   <div id="histbar">
     <button id="toggle" aria-label="Toggle history">&#9656;</button>
     <span id="histtitle">History</span>
-    <span id="chip" class="chip" hidden></span>
     <button id="calbtn" aria-label="Pick a date">&#128197;</button>
   </div>
   <div id="cal" hidden>
@@ -211,7 +210,7 @@ const layer = L.layerGroup().addTo(map);
 
 const state = {
   counts: {},       // local day -> points, from /api/summary
-  selected: null,   // 'YYYY-MM-DD'
+  selected: new Set(),  // 'YYYY-MM-DD' days picked in the calendar
   reports: [],      // server-filtered window
   uiDays: 7,
   tag: '',          // '' = all accessible tags
@@ -249,9 +248,21 @@ function dayRange(key) {
   return {from: start.toISOString(), to: end.toISOString()};
 }
 function reportsPath() {
-  if (state.selected) {
-    const r = dayRange(state.selected);
+  const sel = [...state.selected].sort();
+  if (sel.length === 1) {
+    const r = dayRange(sel[0]);
     return 'api/reports?from=' + encodeURIComponent(r.from) + '&to=' + encodeURIComponent(r.to) +
+           tagSuffix();
+  }
+  if (sel.length > 1 && sel.length <= 31) {
+    return 'api/reports?dates=' + sel.join(',') +
+           '&tz=' + new Date().getTimezoneOffset() + tagSuffix();
+  }
+  if (sel.length > 31) {
+    // too many days for a URL: fall back to the whole span
+    const a = dayRange(sel[0]).from;
+    const b = dayRange(sel[sel.length - 1]).to;
+    return 'api/reports?from=' + encodeURIComponent(a) + '&to=' + encodeURIComponent(b) +
            tagSuffix();
   }
   return 'api/reports?days=' + state.uiDays + tagSuffix();
@@ -307,11 +318,17 @@ function renderCalendar() {
     const key = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
     const n = state.counts[key] || 0;
     const el = document.createElement('div');
-    el.className = 'day ' + (n ? 'has' : 'off') + (key === state.selected ? ' sel' : '');
+    el.className = 'day ' + (n ? 'has' : 'off') + (state.selected.has(key) ? ' sel' : '');
     el.textContent = d;
     if (n) {
       el.title = n + ' point(s)';
-      el.onclick = () => { state.selected = key; renderCalendar(); setHistCollapsed(false); refresh(); };
+      el.onclick = () => {
+        if (state.selected.has(key)) state.selected.delete(key);
+        else state.selected.add(key);
+        renderCalendar();
+        setHistCollapsed(false);
+        refresh();
+      };
     }
     grid.appendChild(el);
   }
@@ -328,7 +345,7 @@ document.getElementById('next').addEventListener('click', (e) => {
 });
 document.getElementById('allbtn').addEventListener('click', (e) => {
   e.stopPropagation();
-  state.selected = null;
+  state.selected.clear();
   renderCalendar();
   refresh();
 });
@@ -378,7 +395,7 @@ function render() {
   if (!visible.length) {
     const el = document.createElement('div');
     el.className = 'empty';
-    el.textContent = state.selected ? 'no points on this date' : 'no reports in this window';
+    el.textContent = state.selected.size ? 'no points on the selected day(s)' : 'no reports in this window';
     list.appendChild(el);
   }
   for (let i = visible.length - 1; i >= 0; i--) {
@@ -397,19 +414,14 @@ function render() {
     list.appendChild(row);
   }
 
-  const chip = document.getElementById('chip');
-  if (state.selected) {
-    chip.hidden = false;
-    chip.textContent = state.selected + '  \u00d7';
-    chip.onclick = (e) => { e.stopPropagation(); state.selected = null; renderCalendar(); refresh(); };
-  } else {
-    chip.hidden = true;
-  }
-  document.getElementById('histtitle').textContent = 'History \u00b7 ' + visible.length;
+  const days = state.selected.size;
+  document.getElementById('histtitle').textContent =
+    (days ? days + (days === 1 ? ' day' : ' days') + ' \u00b7 ' : 'History \u00b7 ') +
+    visible.length;
 
   const last = visible.length ? visible[visible.length - 1] : null;
   document.getElementById('count').textContent =
-    visible.length + ' report(s)' + (state.selected ? '' : ' \u00b7 last ' + state.uiDays + 'd');
+    visible.length + ' report(s)' + (days ? '' : ' \u00b7 last ' + state.uiDays + 'd');
   document.getElementById('seen').textContent =
     last ? 'last seen ' + new Date(last.when).toLocaleString() : 'nothing in this range';
 
@@ -629,7 +641,7 @@ function renderTagSelect(tags) {
 }
 document.getElementById('tagsel').addEventListener('change', (e) => {
   state.tag = e.target.value;
-  state.selected = null;
+  state.selected.clear();
   refresh();
 });
 

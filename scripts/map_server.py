@@ -348,6 +348,25 @@ class Store:
         sql += " ORDER BY ts"
         return [self._row(r) for r in self.db.execute(sql, params).fetchall()]
 
+    def query_ranges(self, tag_ids, ranges) -> list[dict]:
+        """Reports inside any of the [start, end) UTC ranges (multi-day select)."""
+        where, params = [], []
+        if tag_ids is not None:
+            if not tag_ids:
+                return []
+            where.append("tag_id IN (" + ",".join("?" * len(tag_ids)) + ")")
+            params.extend(tag_ids)
+        if ranges:
+            where.append("(" + " OR ".join(["(ts >= ? AND ts < ?)"] * len(ranges)) + ")")
+            for start, end in ranges:
+                params.extend([int(start), int(end)])
+        sql = ("SELECT id, tag_id, when_iso, lat, lon, accuracy, status, confidence"
+               " FROM points")
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY ts"
+        return [self._row(r) for r in self.db.execute(sql, params).fetchall()]
+
     def summary(self, tag_ids, tz_offset_min: int) -> dict:
         if tag_ids is not None and not tag_ids:
             return {}
@@ -654,7 +673,26 @@ class Handler(BaseHTTPRequestHandler):
         days = 0 if (from_ts is not None or to_ts is not None) else int(
             (query.get("days") or [self.args.ui_days])[0] or 0)
 
-        points = self.store.query(scope, from_ts, to_ts, days)
+        # Multi-day selection: comma-separated local dates, converted to UTC
+        # windows with the client's timezone offset (JS getTimezoneOffset()).
+        dates = (query.get("dates") or [None])[0]
+        if dates:
+            try:
+                tz_offset = int((query.get("tz") or ["0"])[0] or 0)
+            except ValueError:
+                tz_offset = 0
+            ranges = []
+            for key in dates.split(","):
+                key = key.strip()
+                try:
+                    day = datetime.strptime(key, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                except ValueError:
+                    continue
+                start = day.timestamp() + tz_offset * 60
+                ranges.append((start, start + 86400))
+            points = self.store.query_ranges(scope, ranges) if ranges else []
+        else:
+            points = self.store.query(scope, from_ts, to_ts, days)
         self._json({
             "count": len(points),
             "total": self.store.count(scope),
