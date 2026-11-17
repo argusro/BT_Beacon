@@ -501,9 +501,10 @@ are an authorisation layer, not separate Apple logins.
   multi-id call returns reports for the *last* id in the list and silently
   ignores the rest — a 192-hash sweep returned one slot's data and nothing
   else, so both tags looked dead while `last_ok` stayed green. `map_server.py`
-  therefore asks for one id per request (`--fetch-workers`, default 4) and
-  sweeps the whole ring; the endpoint is single-threaded, so a sweep takes about
-  a minute and `--poll` must stay well above that.
+  therefore asks for one id per request (`--fetch-workers`, default 4), which
+  makes a sweep **192 requests**, taking 2–3 minutes because the endpoint is
+  single-threaded. The poller and page-triggered refreshes share one timer, so
+  a sweep runs at most once per `--refresh-seconds`/`--poll` (900 s).
 - **Apple session expiry.** The stored session lasts weeks to months, then needs
   a fresh login (`bash deploy.sh login` on the VPS). The dashboard shows a
   banner when fetching starts failing; history already collected is unaffected.

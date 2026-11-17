@@ -474,10 +474,15 @@ def collect(args, store: Store, rings: dict, tag_ids: dict) -> None:
 
 
 def _collect_guarded(args, store: Store, rings: dict, tag_ids: dict) -> str | None:
-    """Run one sweep, but never two at a time."""
+    """Run one sweep, but never two at a time.
+
+    Also stamps last_fetch so the background poller and page-triggered refreshes
+    share one timer instead of each keeping their own.
+    """
     if STATE["fetching"]:
         return STATE["last_error"]
     STATE["fetching"] = True
+    STATE["last_fetch"] = time.time()
     try:
         collect(args, store, rings, tag_ids)
         return None

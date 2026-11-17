@@ -52,7 +52,7 @@ services:
       - --poll
       - "15"
       - --refresh-seconds
-      - "600"
+      - "900"
       - --fetch-workers
       - "4"
       - --auth
