@@ -74,11 +74,30 @@
   #list { overflow-y: auto; }
   .row { padding: 7px 10px; border-bottom: 1px solid #f2f2f2; cursor: pointer; }
   .row:hover { background: #f0f6ff; }
+  .row.sel { background: #e8f0fe; box-shadow: inset 3px 0 0 #1a73e8; }
   .row .t { font-weight: 600; }
   .row .d { color: #666; font-size: 11px; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
          margin-right: 6px; vertical-align: middle; }
   .empty { padding: 10px; color: #888; font-size: 12px; }
+
+  /* ---- timeline (desktop only) ---- */
+  #timeline { display: none; }
+  @media (min-width: 760px) {
+    #timeline {
+      display: block; bottom: 10px; left: 400px; right: 10px; max-width: 900px;
+      padding: 6px 12px 8px;
+    }
+    #timeline[hidden] { display: none !important; }
+  }
+  #tlhead { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  #tlwhen { font-weight: 600; white-space: nowrap; }
+  #tlwhere { color: #555; font-size: 11px; overflow: hidden;
+             text-overflow: ellipsis; white-space: nowrap; }
+  #tlplay { background: none; border: 0; color: #1a73e8; cursor: pointer;
+            font: inherit; padding: 0 2px; }
+  #tlcanvas { display: block; width: 100%; height: 18px; margin: 3px 0 1px; }
+  #tlrange { display: block; width: 100%; margin: 0; accent-color: #1a73e8; }
 
   #hint { display:none; bottom: 10px; right: 10px; max-width: 280px; padding: 12px; }
   #hint button { margin-top: 4px; padding: 6px 12px; }
@@ -132,6 +151,17 @@
     <button id="allbtn">Recent</button>
   </div>
   <div id="list"></div>
+</div>
+
+<div id="timeline" class="panel" hidden>
+  <div id="tlhead">
+    <button id="tlplay" aria-label="Play through the day">&#9654;</button>
+    <span id="tlwhen">&mdash;</span>
+    <span id="tlwhere"></span>
+  </div>
+  <canvas id="tlcanvas"></canvas>
+  <input id="tlrange" type="range" min="0" max="1000" step="1" value="1000"
+         aria-label="Timeline">
 </div>
 
 <div id="hint" class="panel">
@@ -349,7 +379,12 @@ function render() {
     row.innerHTML = `<span class="dot" style="background:${colorOf(x.tag_id)}"></span>` +
                     `<span class="t">${rowTime(x.when)}</span> ` +
                     `<span class="d">${nameOf(x.tag_id)} &middot; ${rowDate(x.when)} &middot; ${x.accuracy} m</span>`;
-    row.onclick = () => { map.setView([x.lat, x.lon], 17); markers[i] && markers[i].openPopup(); };
+    row.dataset.i = i;
+    row.onclick = () => {
+      tlJump(i);
+      map.setView([x.lat, x.lon], 17);
+      markers[i] && markers[i].openPopup();
+    };
     list.appendChild(row);
   }
 
@@ -380,7 +415,161 @@ function render() {
   } else {
     open.classList.add('off');
   }
+
+  tlBuild();
 }
+
+/* ---------- timeline (desktop) ---------- */
+// A scrubber over the loaded window: dragging shows which report was the latest
+// one at that moment (marker + label + row highlight), so you can replay a day
+// and see where the tag was at any time.
+const tl = {
+  t0: 0, t1: 0, active: -1, cursor: null, timer: null, playing: false,
+  follow: true, at: null,
+};
+
+function tlTime(x) { return new Date(x.when).getTime(); }
+
+// last report at or before t (binary search; reports are sorted ascending)
+function tlIndexAt(t) {
+  const rs = state.reports;
+  if (!rs.length) return -1;
+  if (t == null || isNaN(t)) return rs.length - 1;
+  let lo = 0, hi = rs.length - 1, best = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (tlTime(rs[mid]) <= t) { best = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  return best;
+}
+
+function tlDraw() {
+  const c = document.getElementById('tlcanvas');
+  const rs = state.reports;
+  const w = c.clientWidth, h = c.clientHeight;
+  if (!w || !h) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+    c.width = Math.round(w * dpr);
+    c.height = Math.round(h * dpr);
+  }
+  const g = c.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+
+  g.fillStyle = '#eceff1';
+  g.fillRect(0, h / 2 - 1, w, 2);
+  if (!rs.length || tl.t1 <= tl.t0) return;
+
+  const span = tl.t1 - tl.t0;
+  const xOf = t => ((t - tl.t0) / span) * (w - 2) + 1;
+
+  rs.forEach(x => {
+    g.fillStyle = colorOf(x.tag_id);
+    g.fillRect(xOf(tlTime(x)), 3, 1.5, h - 6);
+  });
+
+  if (tl.active >= 0 && rs[tl.active]) {
+    g.fillStyle = '#d93025';
+    g.fillRect(xOf(tlTime(rs[tl.active])) - 0.5, 0, 1.5, h);
+  }
+}
+
+function tlSetActive(i, pan) {
+  const rs = state.reports;
+  if (!rs.length) return;
+  i = Math.max(0, Math.min(rs.length - 1, i));
+  tl.active = i;
+  const x = rs[i];
+
+  if (!tl.cursor) {
+    tl.cursor = L.circleMarker([x.lat, x.lon], {
+      radius: 12, color: '#d93025', weight: 2, fill: false, opacity: .9
+    }).addTo(map);
+  } else {
+    tl.cursor.setLatLng([x.lat, x.lon]);
+  }
+  tl.cursor.bringToFront();
+
+  document.getElementById('tlwhen').textContent = new Date(x.when).toLocaleString();
+  document.getElementById('tlwhere').textContent =
+    (nameOf(x.tag_id) || 'tag') + ' \u00b7 ' + x.lat.toFixed(5) + ', ' +
+    x.lon.toFixed(5) + ' \u00b7 \u00b1' + x.accuracy + ' m';
+
+  document.querySelectorAll('#list .row.sel').forEach(r => r.classList.remove('sel'));
+  const row = document.querySelector('#list .row[data-i="' + i + '"]');
+  if (row) row.classList.add('sel');
+
+  document.getElementById('tlrange').value =
+    tl.t1 > tl.t0 ? Math.round(((tlTime(x) - tl.t0) / (tl.t1 - tl.t0)) * 1000) : 1000;
+
+  tlDraw();
+  if (pan && !map.getBounds().contains(L.latLng(x.lat, x.lon))) {
+    map.panTo([x.lat, x.lon], {animate: false});
+  }
+}
+
+function tlBuild() {
+  const panel = document.getElementById('timeline');
+  const rs = state.reports;
+  if (!rs.length) {
+    panel.hidden = true;
+    if (tl.cursor) { tl.cursor.remove(); tl.cursor = null; }
+    tl.active = -1;
+    return;
+  }
+  panel.hidden = false;
+  tl.t0 = tlTime(rs[0]);
+  tl.t1 = tlTime(rs[rs.length - 1]);
+  if (tl.t1 <= tl.t0) tl.t1 = tl.t0 + 60000;
+  tlSetActive(tl.follow ? rs.length - 1 : tlIndexAt(tl.at));
+}
+
+function tlJump(i) {
+  tl.follow = false;
+  tl.at = tlTime(state.reports[Math.min(i, state.reports.length - 1)]);
+  tlSetActive(i, true);
+}
+
+function tlStopPlay() {
+  if (tl.timer) { clearInterval(tl.timer); tl.timer = null; }
+  tl.playing = false;
+  document.getElementById('tlplay').textContent = '\u25b6';
+}
+
+document.getElementById('tlrange').addEventListener('input', (e) => {
+  tlStopPlay();
+  const rs = state.reports;
+  if (!rs.length) return;
+  tl.follow = false;
+  tl.at = tl.t0 + (Number(e.target.value) / 1000) * (tl.t1 - tl.t0);
+  const raw = e.target.value;              // keep the thumb where the user put it
+  tlSetActive(tlIndexAt(tl.at));
+  e.target.value = raw;
+});
+
+document.getElementById('tlrange').addEventListener('change', (e) => {
+  const rs = state.reports;
+  if (Number(e.target.value) >= 995) tl.follow = true;
+  if (tl.active >= 0) map.panTo([rs[tl.active].lat, rs[tl.active].lon]);
+});
+
+document.getElementById('tlplay').addEventListener('click', () => {
+  if (tl.playing) { tlStopPlay(); return; }
+  if (!state.reports.length) return;
+  tl.playing = true;
+  tl.follow = false;
+  document.getElementById('tlplay').textContent = '\u23f8';
+  const step = Math.max(1, Math.round(state.reports.length / 200));
+  tl.timer = setInterval(() => {
+    const next = tl.active + step;
+    if (next >= state.reports.length) { tlSetActive(state.reports.length - 1, true); tlStopPlay(); return; }
+    tlSetActive(next, true);
+  }, 150);
+});
+
+window.addEventListener('resize', tlDraw);
 
 /* ---------- tag selector ---------- */
 function renderTagSelect(tags) {
