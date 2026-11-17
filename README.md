@@ -491,6 +491,13 @@ are an authorisation layer, not separate Apple logins.
 - **Power.** One BLE advertisement every 1–2 s draws ~10–15 mA from a 3S pack,
   so a 1000 mAh battery lasts days, not hours. Light-sleep between bursts is the
   next optimisation.
+- **Apple's fetch API only answers one id per request.** Since mid-Nov 2026 a
+  multi-id call returns reports for the *last* id in the list and silently
+  ignores the rest — a 192-hash sweep returned one slot's data and nothing
+  else, so both tags looked dead while `last_ok` stayed green. `map_server.py`
+  therefore asks for one id per request (`--fetch-workers`, default 4) and
+  sweeps the whole ring; the endpoint is single-threaded, so a sweep takes about
+  a minute and `--poll` must stay well above that.
 - **Apple session expiry.** The stored session lasts weeks to months, then needs
   a fresh login (`bash deploy.sh login` on the VPS). The dashboard shows a
   banner when fetching starts failing; history already collected is unaffected.

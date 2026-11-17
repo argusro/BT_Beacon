@@ -51,6 +51,10 @@ services:
       - "20000"
       - --poll
       - "15"
+      - --refresh-seconds
+      - "600"
+      - --fetch-workers
+      - "4"
       - --auth
       - ${DASHBOARD_USER:-argus}:${DASHBOARD_PASS:-changeme}
       - --host

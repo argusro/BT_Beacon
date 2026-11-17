@@ -26,6 +26,7 @@ import threading
 import time
 import urllib.request
 import zlib
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
@@ -37,7 +38,7 @@ from decrypt_reports import decrypt_payload, load_keys  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "scripts" / "web"
-STATE = {"last_ok": None, "last_error": None, "last_fetch": 0.0}
+STATE = {"last_ok": None, "last_error": None, "last_fetch": 0.0, "fetching": False}
 
 PBKDF2_ROUNDS = 120_000
 
@@ -368,18 +369,50 @@ def _epoch(iso: str) -> float:
 # --------------------------------------------------------------------------- #
 # fetching
 # --------------------------------------------------------------------------- #
-def fetch_reports(args, hashes: list[str]) -> list[dict]:
-    if args.proxy:
-        url, body = args.proxy, {"search": [{"ids": hashes}]}
-    else:
-        url = args.endpoint.rstrip("/") + "/"
-        body = {"ids": hashes, "days": args.days}
-
+def _post_ids(url: str, ids: list[str], days: int) -> list[dict]:
     request = urllib.request.Request(
-        url, data=json.dumps(body).encode(),
+        url, data=json.dumps({"ids": ids, "days": days}).encode(),
         headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(request, timeout=120) as response:
         return json.load(response).get("results", [])
+
+
+def fetch_reports(args, hashes: list[str]) -> list[dict]:
+    if args.proxy:
+        url, body = args.proxy, {"search": [{"ids": hashes}]}
+        request = urllib.request.Request(
+            url, data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return json.load(response).get("results", [])
+
+    # Apple's fetch service only answers the *tail* of a multi-id request
+    # (observed 2026-11-17: a 192-id call returned reports for the last id and
+    # silently ignored the other 191, so both tags effectively stopped being
+    # fetched). One id per request is the only shape that reliably returns a
+    # slot's reports. The endpoint server is single-threaded, so the sweep takes
+    # roughly a minute per tag pair; keep --poll well above that.
+    url = args.endpoint.rstrip("/") + "/"
+    results: list[dict] = []
+    state = {"ok": 0}
+
+    def one(h: str) -> list[dict]:
+        try:
+            found = _post_ids(url, [h], args.days)
+            state["ok"] += 1
+            return found
+        except Exception as exc:  # noqa: BLE001
+            print(f"fetch failed for {h[:8]}: {exc}", flush=True)
+            return []
+
+    workers = max(1, min(args.fetch_workers, 8))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for chunk in pool.map(one, hashes):
+            results.extend(chunk)
+
+    if hashes and state["ok"] == 0:
+        raise RuntimeError("every per-id fetch failed")
+    return results
 
 
 def collect(args, store: Store, rings: dict, tag_ids: dict) -> None:
@@ -421,15 +454,39 @@ def collect(args, store: Store, rings: dict, tag_ids: dict) -> None:
     STATE["last_error"] = None
 
 
+def _collect_guarded(args, store: Store, rings: dict, tag_ids: dict) -> str | None:
+    """Run one sweep, but never two at a time."""
+    if STATE["fetching"]:
+        return STATE["last_error"]
+    STATE["fetching"] = True
+    try:
+        collect(args, store, rings, tag_ids)
+        return None
+    except RuntimeError as exc:
+        return str(exc)
+    finally:
+        STATE["fetching"] = False
+
+
 def maybe_refresh(args, store: Store, rings: dict, tag_ids: dict, force: bool) -> str | None:
     if not force and time.time() - STATE["last_fetch"] < args.refresh_seconds:
         return STATE["last_error"]
+
+    # A sweep is one request per hash, so it takes about a minute. Never block
+    # an HTTP response on it: refresh in the background and serve stored data.
+    if not force:
+        STATE["last_fetch"] = time.time()
+
+        def run():
+            error = _collect_guarded(args, store, rings, tag_ids)
+            if error:
+                print(f"background fetch failed: {error}", flush=True)
+
+        threading.Thread(target=run, daemon=True).start()
+        return STATE["last_error"]
+
     STATE["last_fetch"] = time.time()
-    try:
-        collect(args, store, rings, tag_ids)
-    except RuntimeError as exc:
-        return str(exc)
-    return None
+    return _collect_guarded(args, store, rings, tag_ids)
 
 
 # --------------------------------------------------------------------------- #
@@ -662,6 +719,8 @@ def main() -> int:
     parser.add_argument("--max-points", type=int, default=20000)
     parser.add_argument("--ui-days", type=int, default=7)
     parser.add_argument("--refresh-seconds", type=int, default=120)
+    parser.add_argument("--fetch-workers", type=int, default=4,
+                        help="parallel per-id requests while fetching reports")
     parser.add_argument("--auth", default=None,
                         help="bootstrap admin as user:password (created/updated at start)")
     parser.add_argument("--web-dir", default=None)
@@ -704,12 +763,12 @@ def main() -> int:
     if args.poll > 0:
         def poller():
             while True:
-                time.sleep(args.poll * 60)
-                try:
-                    collect(args, store, rings, tag_ids)
+                error = _collect_guarded(args, store, rings, tag_ids)
+                if error:
+                    print(f"poll failed: {error}", flush=True)
+                else:
                     print(f"polled: {store.count()} points", flush=True)
-                except Exception as exc:  # noqa: BLE001
-                    print(f"poll failed: {exc}", flush=True)
+                time.sleep(args.poll * 60)
 
         threading.Thread(target=poller, daemon=True).start()
 
