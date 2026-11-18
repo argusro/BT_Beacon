@@ -58,6 +58,11 @@ if [ "$MODE" = "login" ]; then
   cd "$APP_DIR/scripts/haystack/vps"
   docker compose up -d anisette
   docker compose stop endpoint >/dev/null 2>&1 || true
+  # force a real login: the endpoint only prompts for credentials when the
+  # stored token is gone (otherwise it just serves and looks like a no-op)
+  echo "==> removing the stored Apple token"
+  docker compose run --rm --entrypoint sh endpoint -c 'rm -f /app/endpoint/data/auth.json' \
+    || echo "!! could not remove auth.json"
   echo "==> interactive Apple login (Ctrl+C when it says 'serving at :6176')"
   docker compose run --rm endpoint || true
   docker compose up -d
