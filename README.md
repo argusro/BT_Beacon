@@ -26,10 +26,23 @@ real tag was there.*
 | Port | `COM9` — native USB Serial/JTAG (`VID 303A / PID 1001`) |
 | Antenna | U.FL external antenna — **must be attached**, BLE range is tiny without it |
 
+<p>
+  <img src="docs/images/xiao-esp32c3.svg" width="440" alt="XIAO ESP32-C3 top view with pin labels (illustration)">
+  <img src="docs/images/mp1584.jpg" width="330" alt="MP1584 buck converter module">
+</p>
+
+Left: the XIAO ESP32-C3 with its 5V pad marked — that pad is VBUS, see
+[Power](#power). Right: the MP1584 module used to drop 12 V to 5 V.
+
 ![Power path: 12 V → MP1584 → Schottky → XIAO 5V pin](docs/images/wiring.svg)
 
 The board has **no built-in user LED** (only a charge indicator). An external LED
 on `D10` through ~220 Ω is optional and blinks at 1 Hz.
+
+The MP1584 photo is by Matthew Berardi, cropped, licensed
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) — original on
+[Wikimedia Commons](https://commons.wikimedia.org/wiki/File:LM2596_buck_converter_module,_MP1584_buck_converter_module,_and_SDB628_boost_converter_module.jpg).
+The board drawing is a vector illustration, not a photograph.
 
 ### Power
 
@@ -48,6 +61,16 @@ Tested arrangement: a 3S LiPo (11.1–12.6 V) through an MP1584 buck set to 5.0 
 into the `5V` pin. That is also the car install: 12 V → buck → diode → `5V`.
 A 1S LiPo on the `BAT` pads is the alternative (onboard charger, leave the `5V`
 pin unconnected). At roughly 10–15 mA from the pack, a 1000 mAh 3S lasts days.
+
+### Case
+
+Two printable parts, `3D Case/beacon.stl` (body) and `3D Case/beacon_cap.stl`
+(cap): a 22 × 22 × 26 mm shell that holds the board and the buck converter
+together.
+
+![The case body and cap, rendered from the STLs](docs/images/case.png)
+
+*Rendered straight from the STLs in this repo.*
 
 ## Quick start
 
@@ -475,7 +498,9 @@ Alternatives:
 | `scripts/haystack/docker_up.sh` | dockerd + network + Anisette + image |
 | `scripts/haystack/Dockerfile` | Patched endpoint image |
 | `scripts/haystack/patched/` | Patched `pypush_gsa_icloud.py` |
-| `keys/beacon.priv.hex` | **Secret** — decrypts reports; gitignored |
+| `3D Case/beacon.stl` | Case body, printable (see [Case](#case)) |
+| `3D Case/beacon_cap.stl` | Case cap, printable |
+| `keys/beacon.priv.hex` | **Secret** - decrypts reports; gitignored |
 
 ## Users and the admin page
 
