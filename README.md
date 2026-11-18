@@ -8,6 +8,15 @@ reports iPhones file for it.
 encrypted report → Apple stores it → we authenticate, fetch and decrypt real
 coordinates.
 
+## Screenshots
+
+![The dashboard on a desktop browser](docs/images/dashboard-desktop.jpg)
+
+<img src="docs/images/dashboard-mobile.jpg" width="300" alt="The dashboard on a phone">
+
+*Demo data: the points above are synthetic, generated for the screenshot — no
+real tag was there.*
+
 ## Hardware
 
 | Item | Value |
@@ -16,6 +25,8 @@ coordinates.
 | Flash | 4 MB |
 | Port | `COM9` — native USB Serial/JTAG (`VID 303A / PID 1001`) |
 | Antenna | U.FL external antenna — **must be attached**, BLE range is tiny without it |
+
+![Power path: 12 V → MP1584 → Schottky → XIAO 5V pin](docs/images/wiring.svg)
 
 The board has **no built-in user LED** (only a charge indicator). An external LED
 on `D10` through ~220 Ω is optional and blinks at 1 Hz.
