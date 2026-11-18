@@ -60,6 +60,14 @@ static constexpr uint32_t REARM_MS = 5UL * 60UL * 1000UL;
 // in flash and the start slot is random, so a reboot is a safe last resort.
 static constexpr uint32_t MAX_ADV_FAILURES = 5;
 
+// CPU clock. BLE works fine at 80 MHz and it is the cheapest power saving
+// available on this core (light sleep is compiled out of the Arduino SDK), so
+// the value is a build flag and can differ per tag:
+//   PLATFORMIO_BUILD_FLAGS="-D BEACON_CPU_MHZ=80"
+#ifndef BEACON_CPU_MHZ
+#define BEACON_CPU_MHZ 160
+#endif
+
 // Slow 1 Hz blink on an external LED wired to D10 (the board has no built-in
 // user LED). Set to 0 to save power.
 #ifndef ENABLE_STATUS_LED
@@ -204,6 +212,10 @@ static void nimble_host_task(void *param) {
 }
 
 void setup() {
+  // Must run before Serial.begin(): changing the core clock reconfigures the
+  // APB/UART dividers, and the Arduino core handles that for us.
+  setCpuFrequencyMhz(BEACON_CPU_MHZ);
+
 #if ENABLE_STATUS_LED
   pinMode(STATUS_LED_PIN, OUTPUT);
   digitalWrite(STATUS_LED_PIN, LOW);
@@ -240,6 +252,7 @@ void setup() {
                 reset_reason_str(esp_reset_reason()), (int)esp_reset_reason());
   Serial.printf("watchdog restarts so far: %lu\n", (unsigned long)wd_restarts);
   Serial.printf("chip        : %s rev %d\n", ESP.getChipModel(), ESP.getChipRevision());
+  Serial.printf("cpu         : %u MHz\n", (unsigned)getCpuFrequencyMhz());
   Serial.printf("keys        : %u, rotating every %lus\n", (unsigned)BEACON_KEY_COUNT,
                 (unsigned long)(ROTATE_MS / 1000));
   Serial.printf("start slot  : %u\n", (unsigned)key_index + 1);
