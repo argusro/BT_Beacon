@@ -27,8 +27,8 @@ real tag was there.*
 | Antenna | U.FL external antenna — **must be attached**, BLE range is tiny without it |
 
 <p>
-  <img src="docs/images/xiao-esp32c3.webp" width="360" alt="Seeed XIAO ESP32-C3">
-  <img src="docs/images/mp1584.webp" width="260" alt="MP1584 buck converter module">
+  <img src="docs/images/xiao-esp32c3.webp" width="300" alt="Seeed XIAO ESP32-C3">
+  <img src="docs/images/mp1584.webp" width="300" alt="MP1584 buck converter module">
 </p>
 
 Left: the XIAO ESP32-C3. Right: the MP1584 module that drops 12 V to 5 V.
@@ -62,9 +62,9 @@ Two printable parts, `3D Case/beacon.stl` (body) and `3D Case/beacon_cap.stl`
 (cap): a 22 × 22 × 26 mm shell that holds the board and the buck converter
 together.
 
-![The case body and cap, rendered from the STLs](docs/images/case.png)
+![The printed case body, interior side](docs/images/case.webp)
 
-*Rendered straight from the STLs in this repo.*
+*The body; `beacon_cap.stl` closes it.*
 
 ## Quick start
 
