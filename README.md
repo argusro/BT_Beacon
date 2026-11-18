@@ -62,9 +62,9 @@ Two printable parts, `3D Case/beacon.stl` (body) and `3D Case/beacon_cap.stl`
 (cap): a 22 × 22 × 26 mm shell that holds the board and the buck converter
 together.
 
-![The printed case body, interior side](docs/images/case.webp)
+<img src="docs/images/case.webp" width="560" alt="The case body and cap">
 
-*The body; `beacon_cap.stl` closes it.*
+*Body and cap; both STLs are in `3D Case/`.*
 
 ## Quick start
 
