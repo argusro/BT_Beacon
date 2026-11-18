@@ -345,7 +345,7 @@ can be replayed either by hand or with the play button.
 python scripts\map_server.py
 
 # phone + PC on the LAN, basic auth on
-python scripts\map_server.py --auth argus:secret
+python scripts\map_server.py --auth user:secret
 
 # or with the public proxy (no Docker needed)
 python scripts\map_server.py --proxy https://haystack-proxy.iokzxt.workers.dev/fetch

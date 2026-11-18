@@ -2,7 +2,7 @@
 # Bring up the macless-haystack backend inside WSL2 Ubuntu.
 #
 # Run from Windows PowerShell:
-#   wsl -d Ubuntu -u root -- bash /mnt/c/Users/argus/Documents/Code/BT_Beacon/scripts/haystack/docker_up.sh
+#   wsl -d Ubuntu -u root -- bash /mnt/c/Users/<you>/Documents/Code/BT_Beacon/scripts/haystack/docker_up.sh
 #
 # Idempotent: starts dockerd, ensures the network, the Windows-ADI anisette
 # server, and the patched endpoint image. Does NOT run the endpoint, because its

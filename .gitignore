@@ -2,12 +2,15 @@
 .vscode/
 *.bak
 
-# Private keys must never be committed. Only the public advertising key
-# (src/beacon_key.h) belongs in the repo.
+# Private keys must never be committed. The advertising key header is generated
+# from keys/ on every build, so a fresh clone creates its own ring instead of
+# inheriting someone else's identity.
 keys/*.priv.hex
 keys/*.priv
 keys/*_devices.json
 keys/*_keys.json
+keys/*.pub.hex
+src/beacon_keys.h
 
 # fetched location reports (contains your location history)
 reports.json
@@ -19,3 +22,6 @@ __pycache__/
 
 # deployment secrets
 scripts/haystack/vps/.env
+
+# local working notes (contains machine-specific paths and the deployment URL)
+CONTEXT.md

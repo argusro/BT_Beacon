@@ -106,12 +106,13 @@ if [ ! -f "$APP_DIR/keys/beacon_keys.json" ]; then
 fi
 
 # Dashboard credentials.
+DASH_USER="${DASHBOARD_USER:-user}"
 if [ ! -f .env ]; then
   PASS="$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)"
-  printf 'DASHBOARD_USER=argus\nDASHBOARD_PASS=%s\n' "$PASS" > .env
+  printf 'DASHBOARD_USER=%s\nDASHBOARD_PASS=%s\n' "$DASH_USER" "$PASS" > .env
   chmod 600 .env
   echo "==> created scripts/haystack/vps/.env"
-  echo "    user:     argus"
+  echo "    user:     $DASH_USER"
   echo "    password: $PASS"
 fi
 
