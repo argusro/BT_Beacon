@@ -27,22 +27,16 @@ real tag was there.*
 | Antenna | U.FL external antenna — **must be attached**, BLE range is tiny without it |
 
 <p>
-  <img src="docs/images/xiao-esp32c3.svg" width="440" alt="XIAO ESP32-C3 top view with pin labels (illustration)">
-  <img src="docs/images/mp1584.jpg" width="330" alt="MP1584 buck converter module">
+  <img src="docs/images/xiao-esp32c3.webp" width="360" alt="Seeed XIAO ESP32-C3">
+  <img src="docs/images/mp1584.webp" width="260" alt="MP1584 buck converter module">
 </p>
 
-Left: the XIAO ESP32-C3 with its 5V pad marked — that pad is VBUS, see
-[Power](#power). Right: the MP1584 module used to drop 12 V to 5 V.
+Left: the XIAO ESP32-C3. Right: the MP1584 module that drops 12 V to 5 V.
 
 ![Power path: 12 V → MP1584 → Schottky → XIAO 5V pin](docs/images/wiring.svg)
 
 The board has **no built-in user LED** (only a charge indicator). An external LED
 on `D10` through ~220 Ω is optional and blinks at 1 Hz.
-
-The MP1584 photo is by Matthew Berardi, cropped, licensed
-[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) — original on
-[Wikimedia Commons](https://commons.wikimedia.org/wiki/File:LM2596_buck_converter_module,_MP1584_buck_converter_module,_and_SDB628_boost_converter_module.jpg).
-The board drawing is a vector illustration, not a photograph.
 
 ### Power
 
