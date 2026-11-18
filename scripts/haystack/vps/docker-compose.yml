@@ -18,6 +18,11 @@ services:
     image: ghcr.io/fdkevin0/anisette-server-rs:latest
     command: ["--backend", "macos"]
     restart: unless-stopped
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - anisette-data:/data
     networks: [mh]
@@ -28,6 +33,7 @@ services:
       dockerfile: Dockerfile
     image: bt-beacon-haystack
     restart: unless-stopped
+    logging: *logging
     volumes:
       - mh-data:/app/endpoint/data
     networks: [mh]
@@ -38,6 +44,7 @@ services:
       context: ../../..
       dockerfile: scripts/haystack/dashboard.Dockerfile
     restart: unless-stopped
+    logging: *logging
     command:
       - --endpoint
       - http://endpoint:6176
