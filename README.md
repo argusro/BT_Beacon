@@ -320,7 +320,7 @@ python scripts\decrypt_reports.py reports.json
 ```
 5 report(s), statusCode=200
 
-1: 2026-11-13T12:57:17+00:00  lat=51.500700 lon=-0.124600 acc=120 status=0 conf=2
+1: 2026-01-15T12:57:17+00:00  lat=51.500700 lon=-0.124600 acc=120 status=0 conf=2
 ```
 
 The hash in `ids` is `base64(sha256(advertising key))`; `scripts/haystack_devices.py`
