@@ -63,7 +63,7 @@ services:
       - --fetch-workers
       - "4"
       - --auth
-      - ${DASHBOARD_USER:-argus}:${DASHBOARD_PASS:-changeme}
+      - ${DASHBOARD_USER:-user}:${DASHBOARD_PASS:-changeme}
       - --host
       - 0.0.0.0
       - --port

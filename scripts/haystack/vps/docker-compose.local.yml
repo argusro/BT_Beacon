@@ -39,7 +39,7 @@ services:
       - --keys-dir
       - /keys
       - --auth
-      - ${DASHBOARD_USER:-argus}:${DASHBOARD_PASS:-dev}
+      - ${DASHBOARD_USER:-user}:${DASHBOARD_PASS:-dev}
       - --store
       - /data/history.db
       - --keep-days
