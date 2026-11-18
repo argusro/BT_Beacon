@@ -17,6 +17,8 @@
     position: absolute; z-index: 1000; background: rgba(255,255,255,.96);
     border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.3);
     font: 13px/1.45 system-ui, sans-serif;
+    /* left/right positioning plus padding must not overflow a phone screen */
+    box-sizing: border-box;
   }
   /* ---- top HUD ---- */
   #hud { top: 10px; left: 50px; right: 10px; max-width: 340px; padding: 8px 12px; }
