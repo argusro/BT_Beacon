@@ -38,7 +38,8 @@ from decrypt_reports import decrypt_payload, load_keys  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "scripts" / "web"
-STATE = {"last_ok": None, "last_error": None, "last_fetch": 0.0, "fetching": False}
+STATE = {"last_ok": None, "last_error": None, "last_fetch": 0.0,
+         "fetching": False, "chunk": 0, "prev_distinct": 0}
 
 PBKDF2_ROUNDS = 120_000
 
@@ -396,7 +397,7 @@ def _post_ids(url: str, ids: list[str], days: int) -> list[dict]:
         return json.load(response).get("results", [])
 
 
-def fetch_reports(args, hashes: list[str]) -> list[dict]:
+def fetch_reports(args, hashes: list[str], chunk: int | None = None) -> list[dict]:
     if args.proxy:
         url, body = args.proxy, {"search": [{"ids": hashes}]}
         request = urllib.request.Request(
@@ -405,32 +406,32 @@ def fetch_reports(args, hashes: list[str]) -> list[dict]:
         with urllib.request.urlopen(request, timeout=120) as response:
             return json.load(response).get("results", [])
 
-    # Apple's fetch service only answers the *tail* of a multi-id request
-    # (observed 2026-11-17: a 192-id call returned reports for the last id and
-    # silently ignored the other 191, so both tags effectively stopped being
-    # fetched). One id per request is the only shape that reliably returns a
-    # slot's reports. The endpoint server is single-threaded, so the sweep takes
-    # roughly a minute per tag pair; keep --poll well above that.
+    # Apple answers only the tail of a multi-id request when it carries a
+    # startDate (the stock endpoint sent startDate: 1). patch_endpoint.py removes
+    # that at image build time, so one request can carry the whole ring again.
+    # `chunk` exists as a fallback in case Apple truncates once more.
     url = args.endpoint.rstrip("/") + "/"
+    size = max(1, chunk or STATE["chunk"] or args.fetch_chunk)
+    parts = [hashes[i:i + size] for i in range(0, len(hashes), size)]
     results: list[dict] = []
     state = {"ok": 0}
 
-    def one(h: str) -> list[dict]:
+    def one(part: list[str]) -> list[dict]:
         try:
-            found = _post_ids(url, [h], args.days)
+            found = _post_ids(url, part, args.days)
             state["ok"] += 1
             return found
         except Exception as exc:  # noqa: BLE001
-            print(f"fetch failed for {h[:8]}: {exc}", flush=True)
+            print(f"fetch failed ({len(part)} ids): {exc}", flush=True)
             return []
 
     workers = max(1, min(args.fetch_workers, 8))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for chunk in pool.map(one, hashes):
-            results.extend(chunk)
+        for found in pool.map(one, parts):
+            results.extend(found)
 
     if hashes and state["ok"] == 0:
-        raise RuntimeError("every per-id fetch failed")
+        raise RuntimeError("every fetch request failed")
     return results
 
 
@@ -442,6 +443,20 @@ def collect(args, store: Store, rings: dict, tag_ids: dict) -> None:
     except Exception as exc:  # noqa: BLE001
         STATE["last_error"] = f"fetch failed: {exc}"
         raise RuntimeError(STATE["last_error"]) from exc
+
+    # Safety net: if a batched sweep suddenly reports a single id while the last
+    # one had several, assume Apple is truncating again and drop back to one id
+    # per request for the rest of the process.
+    distinct = {r.get("id") for r in raw if r.get("id")}
+    if (len(distinct) <= 1 and STATE["prev_distinct"] >= 3
+            and (STATE["chunk"] or args.fetch_chunk) > 1):
+        print(f"!! batched fetch returned {len(distinct)} distinct id(s), previous "
+              f"sweep had {STATE['prev_distinct']}; retrying one id per request",
+              flush=True)
+        STATE["chunk"] = 1
+        raw = fetch_reports(args, all_hashes, chunk=1)
+        distinct = {r.get("id") for r in raw if r.get("id")}
+    STATE["prev_distinct"] = len(distinct)
 
     hash_to_tag, hash_to_key = {}, {}
     for name, ring in rings.items():
@@ -763,7 +778,9 @@ def main() -> int:
     parser.add_argument("--ui-days", type=int, default=7)
     parser.add_argument("--refresh-seconds", type=int, default=120)
     parser.add_argument("--fetch-workers", type=int, default=4,
-                        help="parallel per-id requests while fetching reports")
+                        help="parallel requests while fetching reports")
+    parser.add_argument("--fetch-chunk", type=int, default=192,
+                        help="ids per fetch request (1 = one id per request)")
     parser.add_argument("--auth", default=None,
                         help="bootstrap admin as user:password (created/updated at start)")
     parser.add_argument("--web-dir", default=None)
